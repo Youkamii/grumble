@@ -66,7 +66,7 @@ export class FontKit {
   }
 }
 
-export interface LaidChar { ch: string; x: number; adv: number; glyph: Glyph }
+export interface LaidChar { ch: string; x: number; glyph: Glyph }
 export interface Line { chars: LaidChar[]; width: number }
 
 /** 단어 단위(공백) 줄바꿈, 공백 없는 긴 조각(한국어)은 글자 단위. 넘치면 마지막 줄을 말줄임. */
@@ -78,13 +78,13 @@ export function layout(kit: FontKit, text: string, size: number, maxWidth: numbe
 
   const flush = () => {
     while (cur.length && cur[cur.length - 1]!.ch === " ") cur.pop();
-    lines.push({ chars: cur, width: cur.length ? cur[cur.length - 1]!.x + cur[cur.length - 1]!.adv : 0 });
+    lines.push({ chars: cur, width: cur.length ? cur[cur.length - 1]!.x + cur[cur.length - 1]!.glyph.adv : 0 });
     cur = [];
     x = 0;
   };
   const pushChar = (ch: string) => {
     const glyph = kit.glyph(ch, size);
-    cur.push({ ch, x, adv: glyph.adv, glyph });
+    cur.push({ ch, x, glyph });
     x += glyph.adv;
   };
   const measure = (s: string) => [...s].reduce((w, c) => w + kit.advance(c, size), 0);
@@ -109,11 +109,11 @@ export function layout(kit: FontKit, text: string, size: number, maxWidth: numbe
     const kept = lines.slice(0, maxLines);
     const last = kept[maxLines - 1]!;
     const ell = kit.glyph("…", size);
-    while (last.chars.length && last.chars[last.chars.length - 1]!.x + last.chars[last.chars.length - 1]!.adv + ell.adv > maxWidth) last.chars.pop();
+    while (last.chars.length && last.chars[last.chars.length - 1]!.x + last.chars[last.chars.length - 1]!.glyph.adv + ell.adv > maxWidth) last.chars.pop();
     while (last.chars.length && /[\s,;:]/.test(last.chars[last.chars.length - 1]!.ch)) last.chars.pop();
     const tail = last.chars[last.chars.length - 1];
-    const ex = tail ? tail.x + tail.adv : 0;
-    last.chars.push({ ch: "…", x: ex, adv: ell.adv, glyph: ell });
+    const ex = tail ? tail.x + tail.glyph.adv : 0;
+    last.chars.push({ ch: "…", x: ex, glyph: ell });
     last.width = ex + ell.adv;
     return kept;
   }

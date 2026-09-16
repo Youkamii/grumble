@@ -16,6 +16,7 @@ export interface FileCursor {
   size: number;
   offset: number;
   mtimeMs: number;
+  ctx?: { cwd: string; session: string; model: string };
 }
 
 export interface State {

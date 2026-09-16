@@ -1,5 +1,5 @@
 /**
- * publish: scan → render → public/ 이 바뀌었을 때만 commit·push.
+ * publish: scan → render → public/ 변경을 commit하고 미푸시 커밋을 push.
  * register: Windows 예약 작업(6시간마다 = 하루 4회)을 창 없이 실행되게 등록.
  *   - wscript //B 로 VBS를 띄우고, VBS가 bun을 창 스타일 0(숨김)으로 실행한다. 콘솔 창이 한 번도 뜨지 않는다.
  */
@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { scan, loadState, saveState } from "./scan.ts";
-import { select } from "./select.ts";
+import { select, DEFAULT_PER_SOURCE } from "./select.ts";
 import { renderSvg } from "./render.ts";
 import { FontKit } from "./font.ts";
 import { stateDir } from "./util.ts";
@@ -15,7 +15,7 @@ import { stateDir } from "./util.ts";
 export const TASK_NAME = "grumble-publish";
 
 export function log(msg: string): void {
-  const line = `${new Date().toISOString()} ${msg}`;
+  const line = `${new Date().toISOString()} ${msg.replace(/:\/\/[^@\s]+@/g, "://***@")}`;
   console.error(line);
   try {
     mkdirSync(stateDir(), { recursive: true });
@@ -29,14 +29,15 @@ function git(args: string[], cwd: string): string {
 
 export interface RenderResult { items: number; files: Record<string, number> }
 
-export function renderAll(repo: string, perSource = 3): RenderResult {
+export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderResult {
   const state = loadState();
   const items = select(state.records, { perSource });
   const pub = join(repo, "public");
   mkdirSync(pub, { recursive: true });
   const files: Record<string, number> = {};
+  const kit = new FontKit();
   for (const theme of ["dark", "light"] as const) {
-    const svg = renderSvg(items, theme, new FontKit());
+    const svg = renderSvg(items, theme, kit);
     const file = join(pub, `grumble-${theme}.svg`);
     writeFileSync(file, svg);
     files[`public/grumble-${theme}.svg`] = svg.length;
@@ -49,7 +50,15 @@ export function renderAll(repo: string, perSource = 3): RenderResult {
   return { items: items.length, files };
 }
 
+export const PUBLISH_BRANCH = "main";
+
 export async function publish(repo: string, opts: { push?: boolean } = {}): Promise<{ changed: boolean; pushed: boolean; items: number }> {
+  // 무인 발행은 main에서만. 작업 브랜치가 체크아웃돼 있으면 WIP가 공개 main으로 밀려나갈 수 있으니 건너뛴다.
+  const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout?.trim();
+  if (branch !== PUBLISH_BRANCH) {
+    log(`skip: current branch is '${branch ?? "?"}', publish only runs on '${PUBLISH_BRANCH}'`);
+    return { changed: false, pushed: false, items: 0 };
+  }
   const state = loadState();
   const s = await scan(state);
   saveState(state);
@@ -60,23 +69,33 @@ export async function publish(repo: string, opts: { push?: boolean } = {}): Prom
 
   // SVG는 렌더 시각이 들어가지 않으므로 내용이 같으면 diff가 없다. grumble.json의 renderedAt만 바뀌는 경우는 발행하지 않는다.
   const status = git(["status", "--porcelain", "--", "public/grumble-dark.svg", "public/grumble-light.svg"], repo);
-  if (!status) {
-    git(["checkout", "--", "public/grumble.json"], repo);
+  const changed = Boolean(status);
+  if (!changed) {
+    // grumble.json이 아직 tracked가 아니면 checkout이 실패하지만 발행 흐름은 계속된다.
+    spawnSync("git", ["checkout", "--", "public/grumble.json"], { cwd: repo, encoding: "utf8" });
     log("no change in svg; skip commit");
-    return { changed: false, pushed: false, items: r.items };
+  } else {
+    git(["add", "--", "public"], repo);
+    const date = new Date().toISOString().slice(0, 16).replace("T", " ");
+    git(["commit", "-q", "-m", `grumble: update ${date} (${r.items} items)`, "--", "public"], repo);
+    log("committed");
   }
-  git(["add", "public"], repo);
-  const date = new Date().toISOString().slice(0, 16).replace("T", " ");
-  git(["commit", "-q", "-m", `grumble: update ${date} (${r.items} items)`], repo);
-  log("committed");
-  if (opts.push === false) return { changed: true, pushed: false, items: r.items };
-  const out = spawnSync("git", ["push", "-q"], { cwd: repo, encoding: "utf8" });
+  if (opts.push === false) return { changed, pushed: false, items: r.items };
+
+  const hasUpstream = spawnSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], { cwd: repo, encoding: "utf8" }).status === 0;
+  const hasUnpushedCommits = hasUpstream
+    ? Number(git(["rev-list", "--count", "@{u}..HEAD"], repo)) > 0
+    : spawnSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: repo, encoding: "utf8" }).status === 0;
+  if (!hasUnpushedCommits) return { changed, pushed: false, items: r.items };
+
+  const pushArgs = hasUpstream ? ["push", "-q", "origin", PUBLISH_BRANCH] : ["push", "-q", "-u", "origin", PUBLISH_BRANCH];
+  const out = spawnSync("git", pushArgs, { cwd: repo, encoding: "utf8" });
   if (out.status !== 0) {
     log(`push failed: ${(out.stderr ?? "").trim()}`);
-    return { changed: true, pushed: false, items: r.items };
+    return { changed, pushed: false, items: r.items };
   }
   log("pushed");
-  return { changed: true, pushed: true, items: r.items };
+  return { changed, pushed: true, items: r.items };
 }
 
 /** 예약 작업 등록(Windows). 6시간 간격, 로그인 상태에서만, 창 없이. */
@@ -90,12 +109,18 @@ export function register(repo: string, bunPath: string): { vbs: string; output: 
     `' grumble 자동 발행. wscript //B 로 실행되며 bun을 숨김 창(0)으로 띄운다.`,
     `Set sh = CreateObject("WScript.Shell")`,
     `sh.CurrentDirectory = "${repoWin}"`,
-    `sh.Run """${bunPath}"" run src/index.ts publish", 0, True`,
+    `code = sh.Run("""${bunPath}"" run src/index.ts publish", 0, True)`,
+    `If code <> 0 Then WScript.Quit(code)`,
     ``,
   ].join("\r\n");
-  writeFileSync(vbs, script);
+  writeFileSync(vbs, "\ufeff" + script, "utf16le");
   const tr = `wscript.exe //B //Nologo "${vbs}"`;
   const out = spawnSync("schtasks", ["/Create", "/F", "/TN", TASK_NAME, "/TR", tr, "/SC", "HOURLY", "/MO", "6", "/ST", "06:00"], { encoding: "utf8" });
   if (out.status !== 0) throw new Error(`schtasks failed: ${out.stderr || out.stdout}`);
   return { vbs, output: (out.stdout || "").trim() };
+}
+
+export function unregister(): string {
+  const out = spawnSync("schtasks", ["/Delete", "/F", "/TN", TASK_NAME], { encoding: "utf8" });
+  return (out.stdout || out.stderr || "").trim();
 }

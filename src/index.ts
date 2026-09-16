@@ -16,9 +16,9 @@ async function main(): Promise<void> {
   }
   if (cmd === "preview") {
     // 실데이터로 선별 결과를 눈으로 확인하는 용도. 공개물과 같은 마스킹을 거친다.
-    const { select } = await import("./select.ts");
+    const { select, DEFAULT_PER_SOURCE } = await import("./select.ts");
     const state = loadState();
-    const n = Number(process.argv[3] ?? 8);
+    const n = Number(process.argv[3] ?? DEFAULT_PER_SOURCE);
     for (const s of select(state.records, { perSource: n })) {
       console.log(`[${s.source}] ${s.ts.slice(0, 16)} (${s.score}/${s.target}) ${s.text}`);
     }
@@ -28,7 +28,8 @@ async function main(): Promise<void> {
 
   if (cmd === "render") {
     const { renderAll } = await import("./publish.ts");
-    console.log(JSON.stringify(renderAll(repo, Number(process.argv[3] ?? 3))));
+    const { DEFAULT_PER_SOURCE } = await import("./select.ts");
+    console.log(JSON.stringify(renderAll(repo, Number(process.argv[3] ?? DEFAULT_PER_SOURCE))));
     return;
   }
   if (cmd === "publish") {
@@ -44,10 +45,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "unregister") {
-    const { TASK_NAME } = await import("./publish.ts");
-    const { spawnSync } = await import("node:child_process");
-    const out = spawnSync("schtasks", ["/Delete", "/F", "/TN", TASK_NAME], { encoding: "utf8" });
-    console.log((out.stdout || out.stderr || "").trim());
+    console.log((await import("./publish.ts")).unregister());
     return;
   }
   console.log("usage: grumble <scan|preview|render|publish [--no-push]|register|unregister>");

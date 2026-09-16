@@ -46,6 +46,8 @@ function iconPath(name: "claudecode" | "openai"): string {
   return m[1]!;
 }
 
+const ICON_PATHS = { claudecode: iconPath("claudecode"), openai: iconPath("openai") };
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -54,12 +56,21 @@ function n(v: number): string {
   return Number(v.toFixed(2)).toString();
 }
 
+function use(glyphId: string, x: number, y: number): string {
+  return `<use href="#${glyphId}" xlink:href="#${glyphId}" x="${n(x)}" y="${n(y)}"/>`;
+}
+
+function lineY(k: number): number {
+  return BUBBLE.y + 22 + k * LINE_H + TEXT_SIZE;
+}
+
 /** (시각ms, 값) 목록 → discrete animate 속성. 같은 시각은 뒤 값이 이긴다. */
 function discrete(attr: string, pairs: Array<[number, number | string]>, loopMs: number): string {
   const map = new Map<number, number | string>();
   for (const [t, v] of pairs) map.set(Math.max(0, Math.min(t, loopMs)), v);
-  const sorted = [...map.entries()].sort((a, b) => a[0] - b[0]);
+  let sorted = [...map.entries()].sort((a, b) => a[0] - b[0]);
   if (sorted.length === 0 || sorted[0]![0] !== 0) sorted.unshift([0, sorted[0]?.[1] ?? 0]);
+  sorted = sorted.filter(([, v], i) => i === 0 || v !== sorted[i - 1]![1]);
   const keyTimes = sorted.map(([t]) => (t / loopMs).toFixed(5).replace(/\.?0+$/, "") || "0").join(";");
   const values = sorted.map(([, v]) => (typeof v === "number" ? n(v) : v)).join(";");
   return `<animate attributeName="${attr}" calcMode="discrete" values="${values}" keyTimes="${keyTimes}" dur="${(loopMs / 1000).toFixed(3)}s" repeatCount="indefinite"/>`;
@@ -101,32 +112,31 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     const lineSvgs: string[] = [];
     const total = tm.nChars;
     lines.forEach((line, k) => {
-      const y = BUBBLE.y + 22 + k * LINE_H + TEXT_SIZE;
+      const y = lineY(k);
       const widths: Array<[number, number]> = [[0, 0]];
-      line.chars.forEach((c, idx) => {
+      line.chars.forEach((c) => {
         const tOn = start + (j + 1) * perChar;
         const tOff = delStart + (total - j) * DEL_MS;
-        const after = c.x + c.adv;
+        const after = c.x + c.glyph.adv;
         widths.push([tOn, after], [tOff, c.x]);
         cursorX.push([tOn, TEXT_X + after], [tOff, TEXT_X + c.x]);
         cursorY.push([tOn, y - TEXT_SIZE + 1], [tOff, y - TEXT_SIZE + 1]);
-        if (idx === 0) { cursorX.push([tOff + DEL_MS, TEXT_X + c.x]); }
         j++;
       });
       widths.push([end, 0]);
       const clipId = `c${i}-${k}`;
       clips.push(`<clipPath id="${clipId}"><rect x="${n(TEXT_X - 1)}" y="${n(y - TEXT_SIZE - 4)}" height="${n(LINE_H + 2)}" width="0">${discrete("width", widths.map(([t, w]) => [t, w + 1]), loopMs)}</rect></clipPath>`);
-      const uses = line.chars.filter((c) => c.glyph.d).map((c) => `<use href="#${c.glyph.id}" xlink:href="#${c.glyph.id}" x="${n(TEXT_X + c.x)}" y="${n(y)}"/>`).join("");
+      const uses = line.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, TEXT_X + c.x, y)).join("");
       lineSvgs.push(`<g clip-path="url(#${clipId})">${uses}</g>`);
     });
     // 첫 글자 전엔 커서를 첫 줄 시작에 둔다.
-    const y0 = BUBBLE.y + 22 + TEXT_SIZE;
+    const y0 = lineY(0);
     cursorX.unshift([start, TEXT_X]); cursorY.unshift([start, y0 - TEXT_SIZE + 1]);
 
     const date = item.ts.slice(0, 10);
     const label = `${NAMES[item.source]}  ·  thinking…  ·  ${date}`;
     const labelLines = layout(kit, label, LABEL_SIZE, TEXT_W, 1);
-    const labelUses = labelLines[0]!.chars.filter((c) => c.glyph.d).map((c) => `<use href="#${c.glyph.id}" xlink:href="#${c.glyph.id}" x="${n(TEXT_X + c.x)}" y="${LABEL_Y}"/>`).join("");
+    const labelUses = labelLines[0]!.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, TEXT_X + c.x, LABEL_Y)).join("");
 
     const vis = discrete("opacity", [[0, 0], [start, 1], [end + Math.min(GAP_MS / 2, 200), 0]], loopMs);
     const cursor = `<rect width="1.6" height="${TEXT_SIZE + 3}" fill="${th.cursor}">${discrete("x", cursorX, loopMs)}${discrete("y", cursorY, loopMs)}<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.5;0.5;1" calcMode="discrete" dur="1.06s" repeatCount="indefinite"/></rect>`;
@@ -149,10 +159,10 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     `<circle cx="${CHAR_CX + CHAR_R + 2}" cy="${CHAR_CY + 10}" r="3.5" fill="${th.bubble}" stroke="${th.stroke}"/>`;
 
   const footer = layout(kit, "grumble — what the model muttered", 9, 300, 1)[0]!;
-  const footerUses = footer.chars.filter((c) => c.glyph.d).map((c) => `<use href="#${c.glyph.id}" xlink:href="#${c.glyph.id}" x="${n(BUBBLE.x + BUBBLE.w - footer.width + c.x)}" y="${H - 9}"/>`).join("");
+  const footerUses = footer.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, BUBBLE.x + BUBBLE.w - footer.width + c.x, H - 9)).join("");
 
   const empty = timed.length === 0
-    ? (() => { const l = layout(kit, "(no grumbles yet)", TEXT_SIZE, TEXT_W, 1)[0]!; return `<g fill="${th.muted}">${l.chars.map((c) => `<use href="#${c.glyph.id}" xlink:href="#${c.glyph.id}" x="${n(TEXT_X + c.x)}" y="${BUBBLE.y + 22 + TEXT_SIZE}"/>`).join("")}</g>`; })()
+    ? (() => { const l = layout(kit, "(no grumbles yet)", TEXT_SIZE, TEXT_W, 1)[0]!; return `<g fill="${th.muted}">${l.chars.map((c) => use(c.glyph.id, TEXT_X + c.x, lineY(0))).join("")}</g>`; })()
     : "";
 
   const aria = items.map((s) => `${NAMES[s.source]}: ${s.text}`).join(" / ");
@@ -161,7 +171,7 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     `<defs>${kit.defs()}${clips.join("")}</defs>` +
     `<rect width="${W}" height="${H}" rx="12" fill="${th.bg}"/>` +
     `<circle cx="${CHAR_CX}" cy="${CHAR_CY}" r="${CHAR_R}" fill="${th.charBg}" stroke="${th.stroke}"/>` +
-    logo("claude", iconPath("claudecode"), th.claude) + logo("codex", iconPath("openai"), th.openai) +
+    logo("claude", ICON_PATHS.claudecode, th.claude) + logo("codex", ICON_PATHS.openai, th.openai) +
     bubble + empty + groups.join("") +
     `<g fill="${th.muted}" opacity="0.7">${footerUses}</g>` +
     `</svg>`;

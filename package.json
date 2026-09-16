@@ -6,12 +6,14 @@
   "private": true,
   "scripts": {
     "scan": "bun run src/index.ts scan",
+    "preview": "bun run src/index.ts preview",
     "render": "bun run src/index.ts render",
     "publish": "bun run src/index.ts publish",
+    "register": "bun run src/index.ts register",
+    "unregister": "bun run src/index.ts unregister",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
-  "engines": { "node": "22.x" },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -19,7 +21,6 @@
     "bun-types": "latest"
   },
   "dependencies": {
-    "opentype.js": "^2.0.0",
-    "simple-icons": "^16.31.0"
+    "opentype.js": "^2.0.0"
   }
 }

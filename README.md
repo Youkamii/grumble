@@ -13,20 +13,24 @@ grumble은 그 로그를 훑어 가장 "꿍시렁"다운 문장을 뽑고, 경�
 
 ## 동작
 
-```
-scan     ~/.codex/sessions, ~/.claude/projects 를 증분 스캔 → ~/.grumble/state.json (원문은 로컬에만)
-preview  선별·마스킹 결과를 터미널에서 확인
-render   public/grumble-{dark,light}.svg 생성 (소스별 최근 3문장)
-publish  scan → render → SVG가 바뀌었을 때만 commit·push
-register Windows 예약 작업 등록: 6시간마다(하루 4회) 창 없이 publish 실행
-```
+| 명령 | 동작 |
+|---|---|
+| `bun run scan` | `~/.codex/sessions`, `~/.claude/projects` 증분 스캔 → `~/.grumble/state.json` (원문은 로컬에만) |
+| `bun run preview` | 선별·마스킹 결과를 터미널에서 확인 |
+| `bun run render` | `public/grumble-{dark,light}.svg` 생성 (소스별 최근 3문장) |
+| `bun run publish` | scan → render → SVG가 바뀌면 commit, 미푸시 커밋이 있으면 push |
+| `bun run publish --no-push` | scan → render → SVG가 바뀌면 로컬 commit까지 수행하고 push는 생략 |
+| `bun run register` | Windows 예약 작업 등록: 6시간마다(하루 4회) 창 없이 publish 실행 |
+| `bun run unregister` | Windows 자동 발행 예약 작업 해제 |
 
 ```bash
 bun install
 bun run scan          # 첫 실행은 전체 스캔(수 GB면 수 분), 이후는 변경분만
-bun run src/index.ts preview
+bun run preview
 bun run render
-bun run src/index.ts register   # 하루 4회 자동 발행
+bun run publish --no-push       # 로컬 커밋까지, 푸시 생략
+bun run register               # 하루 4회 자동 발행
+bun run unregister             # 자동 발행 해제
 ```
 
 ## 데이터 소스
@@ -41,9 +45,23 @@ bun run src/index.ts register   # 하루 4회 자동 발행
 ## 공개 안전
 
 공개물에 나가는 문장은 반드시 `mask()`를 통과한다.
-URL · Windows/Unix/UNC 경로 · 이메일 · IP · 해시 · 토큰 접두(sk-, ghp_ …) · 백틱 코드 · 파일명 · 환경변수 ·
-작업 폴더 이름에서 뽑은 프로젝트명 · 24자 이상 인용을 각각 `[url] [path] [email] [ip] [hash] [secret] [code] [file] [env] [project] [quote]` 로 바꾼다.
+
+| 대상 | 마스킹 토큰 |
+|---|---|
+| URL, 스킴 없는 호스트명(`admin.acme-internal.example.com`, `corp.io/panel`) | `[url]` |
+| Windows/Unix/UNC 경로 | `[path]` |
+| 이메일, IP, 해시 | `[email]`, `[ip]`, `[hash]` |
+| 32자 이상 랜덤 토큰, JWT, 접두 토큰(`sk-`, `ghp_` 등) | `[secret]` |
+| 백틱 코드 | `[code]` |
+| 파일명, 확장자 없는 민감 파일명(`id_rsa` 등), `.env.*` | `[file]` |
+| 환경변수와 셸 변수(`$var`, `${OPENAI_API_KEY}` 등) | `[env]` |
+| 작업 폴더의 basename 전체(하이픈·밑줄로 나누지 않음) | `[project]` |
+| 계정명·홈 폴더명·SSH 설정의 `Host` 별칭 | `[name]` |
+| 이슈·PR 번호(`#36` 등) | `#[n]` |
+| `""`, `''`, `“”`, `‘’`, `「」`, `『』` 안의 24자 이상 인용 | 따옴표를 유지한 `[quote]` |
+
 원문과 세션 id, cwd는 `~/.grumble/state.json`에만 있고 저장소에는 올라가지 않는다.
+마스킹은 완벽하지 않으므로 발행 전 `bun run preview`로 내용을 확인해야 한다.
 
 ## 렌더링
 

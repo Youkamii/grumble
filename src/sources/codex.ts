@@ -12,28 +12,22 @@ export const CODEX_MARKER = '"summary_text"';
 export interface CodexCtx { cwd: string; session: string; model: string }
 
 export function codexLine(line: string, ctx: CodexCtx): GrumbleRecord[] {
-  if (line.includes('"session_meta"')) {
-    try {
-      const o = JSON.parse(line);
-      const p = o?.payload;
-      if (o?.type === "session_meta" && p) {
-        if (typeof p.cwd === "string") ctx.cwd = p.cwd;
-        if (typeof p.id === "string") ctx.session = p.id;
-      }
-    } catch { /* skip */ }
-    return [];
-  }
-  if (line.includes('"turn_context"')) {
-    try {
-      const o = JSON.parse(line);
-      if (o?.type === "turn_context" && typeof o?.payload?.model === "string") ctx.model = o.payload.model;
-    } catch { /* skip */ }
-    return [];
-  }
-  if (!line.includes(CODEX_MARKER) || !line.includes('"response_item"')) return [];
+  const hasContext = /"type"\s*:\s*"(?:session_meta|turn_context)"/.test(line);
+  if (!hasContext && (!line.includes(CODEX_MARKER) || !line.includes('"response_item"'))) return [];
   let o: any;
   try { o = JSON.parse(line); } catch { return []; }
   const p = o?.payload;
+  if (o?.type === "session_meta") {
+    if (typeof p?.cwd === "string") ctx.cwd = p.cwd;
+    if (typeof p?.id === "string") ctx.session = p.id;
+    return [];
+  }
+  if (o?.type === "turn_context") {
+    if (typeof p?.model === "string") ctx.model = p.model;
+    // 매 턴 cwd가 실려 오므로 session_meta를 못 본 증분 읽기(구버전 커서)에서도 복구된다.
+    if (typeof p?.cwd === "string" && p.cwd) ctx.cwd = p.cwd;
+    return [];
+  }
   if (o?.type !== "response_item" || p?.type !== "reasoning" || !Array.isArray(p.summary)) return [];
   const ts = typeof o.timestamp === "string" ? o.timestamp : "";
   const out: GrumbleRecord[] = [];

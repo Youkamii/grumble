@@ -3,11 +3,10 @@
  * Codex 세션 폴더가 수십 GB이므로 전체 재스캔은 금지. 첫 실행만 전체.
  */
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, renameSync } from "node:fs";
-import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { GrumbleRecord, State } from "./types.ts";
-import { codexLine, CODEX_MARKER, type CodexCtx } from "./sources/codex.ts";
-import { claudeLine, CLAUDE_MARKER } from "./sources/claude.ts";
+import { codexLine, type CodexCtx } from "./sources/codex.ts";
+import { claudeLine } from "./sources/claude.ts";
 import { codexSessionsDir, claudeProjectsDir, stateDir, statePath } from "./util.ts";
 
 export const MAX_RECORDS = 5000;
@@ -28,7 +27,7 @@ export function loadState(path = statePath()): State {
 export function saveState(state: State, path = statePath()): void {
   mkdirSync(stateDir(), { recursive: true });
   const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state));
+  writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
   renameSync(tmp, path);
 }
 
@@ -90,10 +89,11 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
     }
   };
 
-  const targets: Array<{ file: string; kind: "codex" | "claude" }> = [
-    ...listJsonl(opts.codexRoot ?? codexSessionsDir()).map((file) => ({ file, kind: "codex" as const })),
-    ...listJsonl(opts.claudeRoot ?? claudeProjectsDir()).map((file) => ({ file, kind: "claude" as const })),
-  ];
+  const sources = [
+    { root: opts.codexRoot ?? codexSessionsDir(), kind: "codex" as const },
+    { root: opts.claudeRoot ?? claudeProjectsDir(), kind: "claude" as const },
+  ].filter(({ root }) => existsSync(root));
+  const targets = sources.flatMap(({ root, kind }) => listJsonl(root).map((file) => ({ file, kind })));
 
   for (const { file, kind } of targets) {
     summary.filesSeen++;
@@ -104,20 +104,24 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
     // 크기가 줄었으면 재작성된 파일 → 처음부터.
     const offset = cur && cur.size <= st.size ? cur.offset : 0;
     summary.filesRead++;
-    const ctx: CodexCtx = { cwd: "", session: "", model: "" };
-    // Codex는 cwd/model이 파일 앞줄에만 있어 증분 읽기 시 컨텍스트가 없다 → 헤더만 다시 읽는다.
-    if (kind === "codex" && offset > 0) await readHeader(file, ctx);
+    const ctx: CodexCtx = offset > 0 && cur?.ctx ? { ...cur.ctx } : { cwd: "", session: "", model: "" };
     const consumed = await readNewLines(file, offset, st.size, (line) => {
-      if (kind === "codex") { push(codexLine(line, ctx)); return; }
-      if (line.includes(CLAUDE_MARKER)) push(claudeLine(line));
+      push(kind === "codex" ? codexLine(line, ctx) : claudeLine(line));
     });
-    state.files[file] = { size: st.size, offset: consumed, mtimeMs: st.mtimeMs };
+    state.files[file] = { size: st.size, offset: consumed, mtimeMs: st.mtimeMs, ctx: kind === "codex" ? ctx : undefined };
     if (summary.filesRead % 100 === 0) log(`read ${summary.filesRead} files, +${summary.added}`);
   }
 
-  // 사라진 파일의 커서는 정리.
+  // 존재하는 소스 루트 안에서 사라진 파일의 커서만 정리.
   const alive = new Set(targets.map((t) => t.file));
-  for (const k of Object.keys(state.files)) if (!alive.has(k)) delete state.files[k];
+  for (const file of Object.keys(state.files)) {
+    if (alive.has(file)) continue;
+    const inScannedRoot = sources.some(({ root }) => {
+      const rel = relative(root, file);
+      return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+    });
+    if (inScannedRoot) delete state.files[file];
+  }
 
   // 소스별 상한. 한 소스의 대량 기록이 다른 소스를 밀어내지 않도록 따로 자른다.
   const all = [...state.records, ...fresh].sort((a, b) => a.ts.localeCompare(b.ts));
@@ -127,17 +131,3 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
   state.scannedAt = new Date().toISOString();
   return summary;
 }
-
-async function readHeader(file: string, ctx: CodexCtx): Promise<void> {
-  const input = createReadStream(file, { encoding: "utf8", highWaterMark: 64 * 1024 });
-  const rl = createInterface({ input });
-  let n = 0;
-  for await (const line of rl) {
-    codexLine(line, ctx);
-    if (++n >= 5 || (ctx.cwd && ctx.model)) break;
-  }
-  rl.close();
-  input.destroy();
-}
-
-export { CODEX_MARKER };
