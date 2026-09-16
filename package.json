@@ -1,0 +1,25 @@
+{
+  "name": "grumble",
+  "version": "0.1.0",
+  "description": "AI CLI 로그에서 모델의 속마음(꿍시렁)을 뽑아 README용 말풍선 SVG로 만드는 로컬 CLI",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "scan": "bun run src/index.ts scan",
+    "render": "bun run src/index.ts render",
+    "publish": "bun run src/index.ts publish",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "engines": { "node": "22.x" },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "bun-types": "latest"
+  },
+  "dependencies": {
+    "opentype.js": "^2.0.0",
+    "simple-icons": "^16.31.0"
+  }
+}
