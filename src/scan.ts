@@ -119,9 +119,11 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
   const alive = new Set(targets.map((t) => t.file));
   for (const k of Object.keys(state.files)) if (!alive.has(k)) delete state.files[k];
 
-  state.records = [...state.records, ...fresh]
-    .sort((a, b) => a.ts.localeCompare(b.ts))
-    .slice(-MAX_RECORDS);
+  // 소스별 상한. 한 소스의 대량 기록이 다른 소스를 밀어내지 않도록 따로 자른다.
+  const all = [...state.records, ...fresh].sort((a, b) => a.ts.localeCompare(b.ts));
+  const kept: GrumbleRecord[] = [];
+  for (const src of ["codex", "claude"] as const) kept.push(...all.filter((r) => r.source === src).slice(-MAX_RECORDS));
+  state.records = kept.sort((a, b) => a.ts.localeCompare(b.ts));
   state.scannedAt = new Date().toISOString();
   return summary;
 }

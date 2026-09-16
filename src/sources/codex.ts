@@ -40,6 +40,8 @@ export function codexLine(line: string, ctx: CodexCtx): GrumbleRecord[] {
   for (const s of p.summary) {
     const text = typeof s?.text === "string" ? s.text.trim() : "";
     if (!text) continue;
+    // "**Planning tests**" 처럼 굵은 제목 한 줄뿐인 요약은 속마음이 아니라 진행 상태 표시다. 버린다.
+    if (/^\*\*[^*\n]{1,200}\*\*\s*$/.test(text)) continue;
     out.push({ id: recordId("codex", ts, text), source: "codex", ts, text, cwd: ctx.cwd, session: ctx.session, model: ctx.model });
   }
   return out;
