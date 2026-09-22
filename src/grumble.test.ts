@@ -436,9 +436,9 @@ describe("render", () => {
       const gap = Math.hypot(d.cx - 56, d.cy - 104) - 36 - d.r;
       expect(gap).toBeGreaterThan(1);
       expect(d.cx + d.r).toBeLessThanOrEqual(134);
-      // 가장 낮은 말풍선(1줄) 안쪽에 있어야 높이가 변해도 붙어 보인다.
-      expect(d.cy - d.r).toBeGreaterThan(bubbleTop(1));
-      expect(d.cy + d.r).toBeLessThan(bubbleTop(1) + bubbleHeight(1));
+      // 생각 방울은 캐릭터 머리 위에서 시작해 말풍선 쪽으로 올라간다(캐릭터 중심보다 위).
+      expect(d.cy).toBeLessThan(104);
+      expect(d.cy - d.r).toBeGreaterThan(bubbleTop(3));
     }
     const [big, small] = dots;
     expect(big!.r).toBeGreaterThan(small!.r);

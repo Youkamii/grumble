@@ -188,8 +188,8 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     : "";
   const firstLines = timed[0]?.lines.length ?? 1;
   const bubble = `<rect x="${BUBBLE.x}" y="${n(bubbleTop(firstLines))}" width="${BUBBLE.w}" height="${bubbleHeight(firstLines)}" rx="${BUBBLE.rx}" fill="${th.bubble}" stroke="${th.stroke}">${heightAnim}</rect>` +
-    `<circle cx="119" cy="108" r="5.5" fill="${th.bubble}" stroke="${th.stroke}"/>` +
-    `<circle cx="103" cy="121" r="3" fill="${th.bubble}" stroke="${th.stroke}"/>`;
+    `<circle cx="113" cy="70" r="5.5" fill="${th.bubble}" stroke="${th.stroke}"/>` +
+    `<circle cx="97" cy="82" r="3" fill="${th.bubble}" stroke="${th.stroke}"/>`;
 
   const footer = layout(kit, "grumble — what the model muttered", 9, 300, 1)[0]!;
   const footerUses = footer.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, BUBBLE.x + BUBBLE.w - footer.width + c.x, H - 9)).join("");
