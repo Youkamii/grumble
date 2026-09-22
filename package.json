@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "sync": "bun run src/index.ts sync",
     "scan": "bun run src/index.ts scan",
     "judge": "bun run src/index.ts judge",
     "preview": "bun run src/index.ts preview",

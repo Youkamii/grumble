@@ -15,13 +15,15 @@ grumble은 그 로그를 훑어 가장 "꿍시렁"다운 문장을 뽑고, 경�
 
 | 명령 | 동작 |
 |---|---|
-| `bun run scan` | `~/.codex/sessions`, `~/.claude/projects` 증분 스캔 → `~/.grumble/state.json` (원문은 로컬에만) |
+| `bun run sync` | 등록된 원격 기계의 로그를 `~/.grumble/remote/<host>/` 로 가져온다 (`--full`이면 증분 무시) |
+| `bun run scan` | `~/.codex/sessions`, `~/.claude/projects`, 그리고 받아둔 원격 사본을 증분 스캔 → `~/.grumble/state.json` (원문은 로컬에만) |
 | `bun run judge [n]` | 아직 판정 안 된 후보를 claude CLI(haiku)에 보내 재미 점수를 매기고 `~/.grumble/judge.json`에 캐시 (기본 상한 200건) |
 | `bun run preview` | 선별·마스킹 결과를 터미널에서 확인 (`--no-judge`면 판정 캐시 무시) |
 | `bun run render` | `public/grumble-{dark,light}.svg` 생성 (소스별 최근 3문장) |
-| `bun run publish` | scan → judge → render → SVG가 바뀌면 commit, 미푸시 커밋이 있으면 push |
-| `bun run publish --no-push` | scan → judge → render → SVG가 바뀌면 로컬 commit까지 수행하고 push는 생략 |
+| `bun run publish` | sync → scan → judge → render → SVG가 바뀌면 commit, 미푸시 커밋이 있으면 push |
+| `bun run publish --no-push` | 위와 같되 push는 생략 |
 | `bun run publish --no-judge` | LLM 판정 호출을 건너뛰고 기존 `judge.json` 캐시만 써서 render → commit/push |
+| `bun run publish --no-sync` | 원격 동기화를 건너뛰고 이미 받아둔 사본만 스캔 |
 | `bun run register` | Windows 예약 작업 등록: 6시간마다(하루 4회) 창 없이 publish 실행 |
 | `bun run unregister` | Windows 자동 발행 예약 작업 해제 |
 
@@ -75,6 +77,36 @@ bun run unregister             # 자동 발행 해제
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `assistant.message.content[].thinking` — 본문이 있는 블록만(대부분은 서명만 남음) |
 
 제목 한 줄뿐인 요약(`**Planning tests**`)은 속마음이 아니라 진행 표시라 수집 단계에서 버린다.
+
+## 원격 기계 (sync)
+
+노트북·홈서버 등 다른 기계에서도 에이전트를 돌린다면 그쪽 로그를 이 PC로 가져와 같은 소스로 합칠 수 있다.
+
+`~/.grumble/config.json` (없으면 원격 없음. 예시는 저장소의 `config.example.json`):
+
+```json
+{
+  "remotes": [
+    { "host": "lia-s1", "claude": "~/.claude/projects", "codex": "~/.codex/sessions" },
+    { "host": "lia-c2" },
+    { "host": "lia-c3", "codex": "" }
+  ]
+}
+```
+
+- `host` — 무비밀번호로 붙는 ssh 별칭(또는 `user@host`). `ssh -o BatchMode=yes`로 부르므로 암호를 묻는 설정이면 실패한다.
+- `claude` / `codex` — 생략하면 각각 `~/.claude/projects`, `~/.codex/sessions`. `""`이나 `null`이면 그 소스는 건너뛴다.
+
+| 항목 | 내용 |
+|---|---|
+| 원격에서 하는 일 | `whoami`, `find … -print0`, `tar czf -` 뿐이다. **읽기 전용** — 원격 파일을 지우거나 고치는 명령은 보내지 않는다 |
+| 받는 것 | gzip tar를 ssh stdout으로 통째로 받아(셸 미경유 `spawnSync`, 5분 타임아웃) 로컬 `tar`로 푼다 |
+| 저장 위치 | `~/.grumble/remote/<host>/claude/`, `~/.grumble/remote/<host>/codex/` — 저장소에는 올라가지 않는다 |
+| 증분 | `~/.grumble/sync.json`의 host별 마지막 동기 시각 이후에 바뀐 `*.jsonl`만 `find -newermt`로 골라 담는다. 첫 회는 전체, `--full`이면 매번 전체 |
+| 덮어쓰기 | 단순 덮어쓰기다. 원격에서 파일이 사라져도 로컬 사본은 남는다(과거 꿍시렁을 잃지 않으려고 일부러 그렇게 뒀다) |
+| 실패 | 한 remote가 안 되면 로그만 남기고 다음 remote로 넘어간다. 한 소스라도 실패하면 그 host의 동기 시각을 전진시키지 않아 다음 회차에 다시 받는다 |
+| 마스킹 | 원격 계정명(`whoami` 결과)과 host 별칭·그 짧은 꼬리(`lia-s1` → `s1`)를 `[name]` 후보에 합친다. 원격 cwd(`/home/lia/Git/foo`)의 basename은 기존 규칙대로 `[project]`가 된다 |
+| 표시 | 레코드에 `host`를 남기지만 **공개물에는 내보내지 않는다**. 말풍선 라벨은 로컬과 똑같다 |
 
 ## 공개 안전
 

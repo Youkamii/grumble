@@ -12,6 +12,7 @@ import { renderSvg } from "./render.ts";
 import { FontKit } from "./font.ts";
 import { stateDir } from "./util.ts";
 import { judge, judgmentMap } from "./judge.ts";
+import { remoteRoots, sync } from "./sync.ts";
 
 export const TASK_NAME = "grumble-publish";
 
@@ -53,15 +54,26 @@ export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderR
 
 export const PUBLISH_BRANCH = "main";
 
-export async function publish(repo: string, opts: { push?: boolean; judge?: boolean } = {}): Promise<{ changed: boolean; pushed: boolean; items: number }> {
+export async function publish(repo: string, opts: { push?: boolean; judge?: boolean; sync?: boolean } = {}): Promise<{ changed: boolean; pushed: boolean; items: number }> {
   // 무인 발행은 main에서만. 작업 브랜치가 체크아웃돼 있으면 WIP가 공개 main으로 밀려나갈 수 있으니 건너뛴다.
   const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout?.trim();
   if (branch !== PUBLISH_BRANCH) {
     log(`skip: current branch is '${branch ?? "?"}', publish only runs on '${PUBLISH_BRANCH}'`);
     return { changed: false, pushed: false, items: 0 };
   }
+  if (opts.sync === false) {
+    log("sync: skipped (--no-sync); 이미 받아둔 원격 사본만 스캔한다");
+  } else {
+    // 원격 동기화가 통째로 실패해도 로컬 로그만으로 발행은 계속돼야 한다.
+    try {
+      const sr = sync({ log });
+      log(`sync: ${sr.hosts} remotes, ${sr.files} files, ${sr.bytes}B, ${sr.ms}ms`);
+    } catch (e) {
+      log(`sync: failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   const state = loadState();
-  const s = await scan(state);
+  const s = await scan(state, { extraRoots: remoteRoots() });
   saveState(state);
   log(`scan: read ${s.filesRead}/${s.filesSeen} files, +${s.added} records, total ${state.records.length}`);
 

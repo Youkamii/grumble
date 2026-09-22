@@ -69,6 +69,8 @@ export async function readNewLines(
 export interface ScanOptions {
   codexRoot?: string;
   claudeRoot?: string;
+  /** 기본 루트 외에 더 읽을 폴더(원격 기계에서 받아온 사본 등). */
+  extraRoots?: Array<{ root: string; kind: "codex" | "claude"; host?: string }>;
   log?: (msg: string) => void;
 }
 
@@ -80,22 +82,23 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
   const summary: ScanSummary = { filesSeen: 0, filesRead: 0, added: 0, duplicates: 0 };
   const fresh: GrumbleRecord[] = [];
 
-  const push = (recs: GrumbleRecord[]) => {
+  const push = (recs: GrumbleRecord[], host?: string) => {
     for (const r of recs) {
       if (seen.has(r.id)) { summary.duplicates++; continue; }
       seen.add(r.id);
-      fresh.push(r);
+      fresh.push(host ? { ...r, host } : r);
       summary.added++;
     }
   };
 
   const sources = [
-    { root: opts.codexRoot ?? codexSessionsDir(), kind: "codex" as const },
-    { root: opts.claudeRoot ?? claudeProjectsDir(), kind: "claude" as const },
+    { root: opts.codexRoot ?? codexSessionsDir(), kind: "codex" as const, host: undefined as string | undefined },
+    { root: opts.claudeRoot ?? claudeProjectsDir(), kind: "claude" as const, host: undefined as string | undefined },
+    ...(opts.extraRoots ?? []),
   ].filter(({ root }) => existsSync(root));
-  const targets = sources.flatMap(({ root, kind }) => listJsonl(root).map((file) => ({ file, kind })));
+  const targets = sources.flatMap(({ root, kind, host }) => listJsonl(root).map((file) => ({ file, kind, host })));
 
-  for (const { file, kind } of targets) {
+  for (const { file, kind, host } of targets) {
     summary.filesSeen++;
     let st;
     try { st = statSync(file); } catch { continue; }
@@ -106,7 +109,7 @@ export async function scan(state: State, opts: ScanOptions = {}): Promise<ScanSu
     summary.filesRead++;
     const ctx: CodexCtx = offset > 0 && cur?.ctx ? { ...cur.ctx } : { cwd: "", session: "", model: "" };
     const consumed = await readNewLines(file, offset, st.size, (line) => {
-      push(kind === "codex" ? codexLine(line, ctx) : claudeLine(line));
+      push(kind === "codex" ? codexLine(line, ctx) : claudeLine(line), host);
     });
     state.files[file] = { size: st.size, offset: consumed, mtimeMs: st.mtimeMs, ctx: kind === "codex" ? ctx : undefined };
     if (summary.filesRead % 100 === 0) log(`read ${summary.filesRead} files, +${summary.added}`);

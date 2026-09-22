@@ -6,10 +6,17 @@ import { statePath } from "./util.ts";
 const cmd = process.argv[2] ?? "help";
 
 async function main(): Promise<void> {
+  if (cmd === "sync") {
+    const { sync } = await import("./sync.ts");
+    const r = sync({ log: (m) => console.error(m), full: process.argv.includes("--full") });
+    console.log(JSON.stringify(r));
+    return;
+  }
   if (cmd === "scan") {
+    const { remoteRoots } = await import("./sync.ts");
     const state = loadState();
     const t0 = Date.now();
-    const s = await scan(state, { log: (m) => console.error(m) });
+    const s = await scan(state, { extraRoots: remoteRoots(), log: (m) => console.error(m) });
     saveState(state);
     console.log(JSON.stringify({ ...s, total: state.records.length, ms: Date.now() - t0, state: statePath() }));
     return;
@@ -49,6 +56,7 @@ async function main(): Promise<void> {
     const r = await publish(repo, {
       push: !process.argv.includes("--no-push"),
       judge: !process.argv.includes("--no-judge"),
+      sync: !process.argv.includes("--no-sync"),
     });
     console.log(JSON.stringify(r));
     return;
@@ -63,7 +71,7 @@ async function main(): Promise<void> {
     console.log((await import("./publish.ts")).unregister());
     return;
   }
-  console.log("usage: grumble <scan|judge [limit]|preview [n] [--no-judge]|render|publish [--no-push] [--no-judge]|register|unregister>");
+  console.log("usage: grumble <sync [--full]|scan|judge [limit]|preview [n] [--no-judge]|render|publish [--no-push] [--no-judge] [--no-sync]|register|unregister>");
 }
 
 main().catch((e) => {

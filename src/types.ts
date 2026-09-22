@@ -10,6 +10,8 @@ export interface GrumbleRecord {
   cwd: string;
   session: string;
   model: string;
+  /** 원격 기계에서 가져온 로그면 그 ssh 별칭. 로컬은 undefined. 공개물에는 내보내지 않는다. */
+  host?: string;
 }
 
 export interface FileCursor {

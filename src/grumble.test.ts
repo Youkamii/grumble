@@ -7,12 +7,16 @@ import {
   buildPrompt, candidates, emptyCache, judge, judgmentMap, loadJudgeCache, parseJudgeOutput,
   suspiciousBatch, MAX_TRIES, type JudgeCache,
 } from "./judge.ts";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { State } from "./types.ts";
 import { FontKit } from "./font.ts";
 import { buildTimeline, renderSvg, THEMES } from "./render.ts";
+import { scan } from "./scan.ts";
+import {
+  configNames, loadConfig, loadSyncState, remoteTarCommand, shq, splitRemotePath, sync, type SyncState,
+} from "./sync.ts";
 import { codexLine } from "./sources/codex.ts";
 import { claudeLine } from "./sources/claude.ts";
 import type { GrumbleRecord } from "./types.ts";
@@ -533,5 +537,99 @@ describe("judge", () => {
 
   test("emptyCache shape", () => {
     expect(emptyCache()).toEqual({ version: 1, items: {} });
+  });
+});
+
+describe("sync", () => {
+  const tmp = (name: string) => join(mkdtempSync(join(tmpdir(), "grumble-sync-")), name);
+
+  test("splitRemotePath expands ~ into $HOME and keeps the leaf as the tar member", () => {
+    expect(splitRemotePath("~/.claude/projects")).toEqual({ parent: "$HOME/.claude", dir: "projects" });
+    expect(splitRemotePath("~/.codex/sessions/")).toEqual({ parent: "$HOME/.codex", dir: "sessions" });
+    expect(splitRemotePath("/var/log/agent")).toEqual({ parent: "/var/log", dir: "agent" });
+    expect(splitRemotePath("~/logs")).toEqual({ parent: "$HOME", dir: "logs" });
+    expect(splitRemotePath("logs")).toEqual({ parent: ".", dir: "logs" });
+  });
+
+  test("remoteTarCommand only ever reads, and goes incremental with a since time", () => {
+    const full = remoteTarCommand("~/.claude/projects");
+    expect(full).toBe(`cd "$HOME/.claude" || exit 3; tar czf - 'projects'`);
+    const inc = remoteTarCommand("~/.claude/projects", "2026-09-22T06:12:36.018Z");
+    expect(inc).toContain("-newermt '2026-09-22T06:12:36.018Z'");
+    expect(inc).toContain("tar czf - --null -T -");
+    // 쓰기·삭제 명령이 섞이지 않는다.
+    for (const cmd of [full, inc]) expect(cmd).not.toMatch(/\brm\b|\bmv\b|>\s*\S|tar x/);
+  });
+
+  test("shq neutralises a single quote in a path", () => {
+    expect(shq("a'b")).toBe(`'a'\\''b'`);
+    expect(remoteTarCommand("~/it's/logs")).toContain(`'logs'`);
+  });
+
+  test("loadConfig defaults to no remotes and drops malformed entries", () => {
+    expect(loadConfig(join(tmpdir(), "grumble-no-such-config.json")).remotes).toEqual([]);
+    const p = tmp("config.json");
+    writeFileSync(p, JSON.stringify({ remotes: [{ host: "lia-s1" }, { host: "" }, { nope: 1 }, { host: "h", codex: "" }] }));
+    expect(loadConfig(p).remotes).toEqual([{ host: "lia-s1" }, { host: "h", codex: "" }]);
+    writeFileSync(p, "{ broken");
+    expect(loadConfig(p).remotes).toEqual([]);
+  });
+
+  test("an unreachable host is logged and skipped without advancing its cursor", () => {
+    const syncPath = tmp("sync.json");
+    const configPath = tmp("config.json");
+    writeFileSync(configPath, JSON.stringify({ remotes: [{ host: "gone" }] }));
+    const logs: string[] = [];
+    const r = sync({
+      syncPath, configPath, log: (m) => logs.push(m),
+      run: () => ({ ok: false, stdout: Buffer.alloc(0), stderr: "Connection timed out", status: 255 }),
+    });
+    expect(r.results).toEqual([]);
+    expect(logs.join(" ")).toContain("unreachable");
+    expect(loadSyncState(syncPath).hosts.gone).toEqual({});
+  });
+
+  test("configNames masks host aliases, their short tails, and remote account names", () => {
+    const cfg = { remotes: [{ host: "lia-s1" }, { host: "ops@build-c2" }] };
+    const st: SyncState = { version: 1, hosts: { "lia-s1": { user: "lia" }, "build-c2": { user: "runner" } } };
+    const names = configNames(cfg, st);
+    expect([...names].sort()).toEqual(["build-c2", "c2", "lia", "lia-s1", "ops", "runner", "s1"]);
+    expect(mask("lia-s1 에서 lia 계정으로 돌렸더니 또 죽었다", { names }))
+      .toBe("[name] 에서 [name] 계정으로 돌렸더니 또 죽었다");
+  });
+});
+
+describe("scan extraRoots", () => {
+  test("records from an extra root carry the host, local ones do not", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "grumble-roots-"));
+    const localRoot = join(dir, "local");
+    const remoteRoot = join(dir, "remote", "lia-s1", "claude");
+    mkdirSync(localRoot, { recursive: true });
+    mkdirSync(remoteRoot, { recursive: true });
+    const line = (text: string, ts: string) => JSON.stringify({
+      type: "assistant", timestamp: ts, cwd: "/home/lia/Git/someproj", sessionId: "s",
+      message: { model: "claude-fable-5-1", content: [{ type: "thinking", thinking: text }] },
+    }) + "\n";
+    writeFileSync(join(localRoot, "a.jsonl"), line("흠, 로컬 빌드가 또 깨졌네요.", "2026-09-20T00:00:00Z"));
+    writeFileSync(join(remoteRoot, "b.jsonl"), line("흠, 원격 빌드가 또 깨졌네요.", "2026-09-21T00:00:00Z"));
+
+    const state: State = { version: 1, scannedAt: null, files: {}, records: [] };
+    const s = await scan(state, {
+      claudeRoot: localRoot,
+      codexRoot: join(dir, "no-such-codex"),
+      extraRoots: [{ root: remoteRoot, kind: "claude", host: "lia-s1" }],
+    });
+    expect(s.added).toBe(2);
+    const byText = Object.fromEntries(state.records.map((r) => [r.text, r.host]));
+    expect(byText["흠, 로컬 빌드가 또 깨졌네요."]).toBeUndefined();
+    expect(byText["흠, 원격 빌드가 또 깨졌네요."]).toBe("lia-s1");
+    // 원격 cwd의 basename도 기존 규칙대로 [project]가 된다.
+    expect(projectNamesFromCwds(state.records.map((r) => r.cwd)).has("someproj")).toBe(true);
+    // 두 번째 스캔은 커서가 있으므로 아무것도 더하지 않는다.
+    expect((await scan(state, {
+      claudeRoot: localRoot,
+      codexRoot: join(dir, "no-such-codex"),
+      extraRoots: [{ root: remoteRoot, kind: "claude", host: "lia-s1" }],
+    })).added).toBe(0);
   });
 });

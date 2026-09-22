@@ -9,6 +9,7 @@
 import type { GrumbleRecord } from "./types.ts";
 import { mask, MASK_TOKEN_RE, projectNamesFromCwds, defaultNames } from "./mask.ts";
 import { bestSentence, type Target } from "./score.ts";
+import { configNames } from "./sync.ts";
 
 export const DEFAULT_PER_SOURCE = 3;
 
@@ -91,7 +92,8 @@ export function select(records: GrumbleRecord[], opts: SelectOptions = {}): Sele
   const judgments = opts.judgments;
   const now = opts.now ?? new Date();
   const projectNames = projectNamesFromCwds(records.map((r) => r.cwd));
-  const names = new Set([...defaultNames(), ...(opts.extraNames ?? [])]);
+  // 원격 기계의 계정명·host 별칭도 [name]으로 가린다(원격 로그에는 그쪽 계정명이 섞여 있다).
+  const names = new Set([...defaultNames(), ...configNames(), ...(opts.extraNames ?? [])]);
 
   // 후보를 한 번만 만들어 두고 정렬 키를 붙인다.
   interface Cand { r: GrumbleRecord; best: NonNullable<ReturnType<typeof bestSentence>>; j?: Judgment; fun: number; key: number }

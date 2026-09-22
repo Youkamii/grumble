@@ -1,0 +1,7 @@
+{
+  "remotes": [
+    { "host": "lia-s1", "claude": "~/.claude/projects", "codex": "~/.codex/sessions" },
+    { "host": "lia-c2" },
+    { "host": "lia-c3", "codex": "" }
+  ]
+}

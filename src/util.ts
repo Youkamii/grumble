@@ -10,3 +10,6 @@ export function codexSessionsDir(): string { return join(homedir(), ".codex", "s
 export function claudeProjectsDir(): string { return join(homedir(), ".claude", "projects"); }
 export function stateDir(): string { return process.env.GRUMBLE_HOME ?? join(homedir(), ".grumble"); }
 export function statePath(): string { return join(stateDir(), "state.json"); }
+export function configPath(): string { return join(stateDir(), "config.json"); }
+export function syncStatePath(): string { return join(stateDir(), "sync.json"); }
+export function remoteDir(): string { return join(stateDir(), "remote"); }
