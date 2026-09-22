@@ -1,5 +1,5 @@
 /**
- * publish: scan → render → public/ 변경을 commit하고 미푸시 커밋을 push.
+ * publish: scan → judge → render → public/ 변경을 commit하고 미푸시 커밋을 push.
  * register: Windows 예약 작업(6시간마다 = 하루 4회)을 창 없이 실행되게 등록.
  *   - wscript //B 로 VBS를 띄우고, VBS가 bun을 창 스타일 0(숨김)으로 실행한다. 콘솔 창이 한 번도 뜨지 않는다.
  */
@@ -11,6 +11,7 @@ import { select, DEFAULT_PER_SOURCE } from "./select.ts";
 import { renderSvg } from "./render.ts";
 import { FontKit } from "./font.ts";
 import { stateDir } from "./util.ts";
+import { judge, judgmentMap } from "./judge.ts";
 
 export const TASK_NAME = "grumble-publish";
 
@@ -31,7 +32,7 @@ export interface RenderResult { items: number; files: Record<string, number> }
 
 export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderResult {
   const state = loadState();
-  const items = select(state.records, { perSource });
+  const items = select(state.records, { perSource, judgments: judgmentMap() });
   const pub = join(repo, "public");
   mkdirSync(pub, { recursive: true });
   const files: Record<string, number> = {};
@@ -52,7 +53,7 @@ export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderR
 
 export const PUBLISH_BRANCH = "main";
 
-export async function publish(repo: string, opts: { push?: boolean } = {}): Promise<{ changed: boolean; pushed: boolean; items: number }> {
+export async function publish(repo: string, opts: { push?: boolean; judge?: boolean } = {}): Promise<{ changed: boolean; pushed: boolean; items: number }> {
   // 무인 발행은 main에서만. 작업 브랜치가 체크아웃돼 있으면 WIP가 공개 main으로 밀려나갈 수 있으니 건너뛴다.
   const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout?.trim();
   if (branch !== PUBLISH_BRANCH) {
@@ -63,6 +64,13 @@ export async function publish(repo: string, opts: { push?: boolean } = {}): Prom
   const s = await scan(state);
   saveState(state);
   log(`scan: read ${s.filesRead}/${s.filesSeen} files, +${s.added} records, total ${state.records.length}`);
+
+  if (opts.judge === false) {
+    log("judge: skipped (--no-judge); 기존 판정 캐시만 사용한다");
+  } else {
+    const j = judge(state, { log });
+    log(`judge: ${j.judged} judged from ${j.candidates} candidates, ${j.okBatches}/${j.batches} batches ok, ${j.skipped} skipped, ${j.ms}ms`);
+  }
 
   const r = renderAll(repo);
   log(`render: ${r.items} items, ${Object.entries(r.files).map(([f, b]) => `${f}=${b}B`).join(" ")}`);

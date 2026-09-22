@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "scan": "bun run src/index.ts scan",
+    "judge": "bun run src/index.ts judge",
     "preview": "bun run src/index.ts preview",
     "render": "bun run src/index.ts render",
     "publish": "bun run src/index.ts publish",
