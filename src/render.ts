@@ -25,7 +25,7 @@ export const THEMES: Record<"dark" | "light", Theme> = {
 export const W = 640;
 export const H = 200;
 const CHAR_CX = 56, CHAR_CY = 104, CHAR_R = 36;
-const BUBBLE = { x: 112, y: 44, w: 512, rx: 16 };
+const BUBBLE = { x: 134, y: 44, w: 490, rx: 16 };
 const TEXT_X = BUBBLE.x + 20;
 const TEXT_W = BUBBLE.w - 40;
 const TEXT_SIZE = 14;
@@ -188,8 +188,8 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     : "";
   const firstLines = timed[0]?.lines.length ?? 1;
   const bubble = `<rect x="${BUBBLE.x}" y="${n(bubbleTop(firstLines))}" width="${BUBBLE.w}" height="${bubbleHeight(firstLines)}" rx="${BUBBLE.rx}" fill="${th.bubble}" stroke="${th.stroke}">${heightAnim}</rect>` +
-    `<circle cx="105" cy="112" r="6" fill="${th.bubble}" stroke="${th.stroke}"/>` +
-    `<circle cx="95" cy="124" r="3.5" fill="${th.bubble}" stroke="${th.stroke}"/>`;
+    `<circle cx="119" cy="108" r="5.5" fill="${th.bubble}" stroke="${th.stroke}"/>` +
+    `<circle cx="103" cy="121" r="3" fill="${th.bubble}" stroke="${th.stroke}"/>`;
 
   const footer = layout(kit, "grumble — what the model muttered", 9, 300, 1)[0]!;
   const footerUses = footer.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, BUBBLE.x + BUBBLE.w - footer.width + c.x, H - 9)).join("");

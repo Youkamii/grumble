@@ -347,7 +347,7 @@ describe("render", () => {
       charsThroughLine += line.chars.length;
       // 다음 줄의 첫 글자를 지운 13ms 뒤에는 이전 줄 마지막 글자의 삭제 위치에 있어야 한다.
       const deletionTime = tm.delStart + (tm.nChars - charsThroughLine + 1) * 13;
-      expect(valueAt(x, deletionTime)).toBe(Number((132 + line.chars.at(-1)!.x).toFixed(2)));
+      expect(valueAt(x, deletionTime)).toBe(Number((154 + line.chars.at(-1)!.x).toFixed(2)));
       expect(valueAt(y, deletionTime)).toBe(67 + lineIndex * 23);
     }
   });
@@ -379,7 +379,7 @@ describe("render", () => {
     }
 
     const svg = renderSvg([one, two, three], "dark", kit);
-    const rect = svg.match(/<rect x="112" y="([\d.]+)" width="512" height="(\d+)"[^>]*>(.*?)<\/rect>/)!;
+    const rect = svg.match(/<rect x="134" y="([\d.]+)" width="490" height="(\d+)"[^>]*>(.*?)<\/rect>/)!;
     expect(rect).not.toBeNull();
     // 정적 y·height는 첫 항목 값이어야 애니메이션이 안 도는 뷰어에서도 첫 화면이 맞는다.
     expect(rect[1]).toBe("72.5");
@@ -435,7 +435,7 @@ describe("render", () => {
     for (const d of dots) {
       const gap = Math.hypot(d.cx - 56, d.cy - 104) - 36 - d.r;
       expect(gap).toBeGreaterThan(1);
-      expect(d.cx + d.r).toBeLessThanOrEqual(112);
+      expect(d.cx + d.r).toBeLessThanOrEqual(134);
       // 가장 낮은 말풍선(1줄) 안쪽에 있어야 높이가 변해도 붙어 보인다.
       expect(d.cy - d.r).toBeGreaterThan(bubbleTop(1));
       expect(d.cy + d.r).toBeLessThan(bubbleTop(1) + bubbleHeight(1));
@@ -454,7 +454,7 @@ describe("render", () => {
       expect(svg).toContain(`fill="${THEMES[theme].bg}"`);
       expect(svg).toContain('<use href="#g14-ac00" xlink:href="#g14-ac00"');
       const empty = renderSvg([], theme, kit);
-      expect(empty).toContain('<use href="#g14-28" xlink:href="#g14-28" x="132" y="80"/>');
+      expect(empty).toContain('<use href="#g14-28" xlink:href="#g14-28" x="154" y="80"/>');
       expect(empty).not.toContain("<animate");
     }
   });
