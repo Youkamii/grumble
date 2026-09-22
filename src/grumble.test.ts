@@ -5,14 +5,14 @@ import { splitTitle, splitSentences, scoreSentence, bestSentence, classifyTarget
 import { select, truncate, recencyBonus, parsePerSource, DEFAULT_PER_SOURCE, HEURISTIC_FUN_CAP, type Selected } from "./select.ts";
 import {
   buildPrompt, candidates, emptyCache, judge, judgmentMap, loadJudgeCache, parseJudgeOutput,
-  suspiciousBatch, MAX_TRIES, type JudgeCache,
+  suspiciousBatch, MAX_TRIES, PROMPT_VERSION, type JudgeCache,
 } from "./judge.ts";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { State } from "./types.ts";
 import { FontKit } from "./font.ts";
-import { buildTimeline, renderSvg, THEMES } from "./render.ts";
+import { buildTimeline, bubbleHeight, bubbleShift, bubbleTop, renderSvg, THEMES } from "./render.ts";
 import { scan } from "./scan.ts";
 import {
   configNames, loadConfig, loadSyncState, remoteTarCommand, shq, splitRemotePath, sync, type SyncState,
@@ -321,8 +321,10 @@ describe("render", () => {
     const tm = timed[0]!;
     expect(tm.lines).toHaveLength(3);
     const svg = renderSvg([item], "dark", kit);
+    // 말풍선 rect에도 y 애니메이션이 있으므로 커서 rect 안으로 범위를 좁힌다.
+    const caret = svg.match(/<rect width="2" height="17" rx="1" fill="[^"]+">(.*?)<\/rect>/)![1]!;
     const frames = (attr: string) => {
-      const match = svg.match(new RegExp(`<animate attributeName="${attr}" calcMode="discrete" values="([^"]+)" keyTimes="([^"]+)"`));
+      const match = caret.match(new RegExp(`<animate attributeName="${attr}" calcMode="discrete" values="([^"]+)" keyTimes="([^"]+)"`));
       expect(match).not.toBeNull();
       return { values: match![1]!.split(";").map(Number), times: match![2]!.split(";").map(Number) };
     };
@@ -349,6 +351,102 @@ describe("render", () => {
       expect(valueAt(y, deletionTime)).toBe(67 + lineIndex * 23);
     }
   });
+  test("the bubble height animation follows each item's line count", () => {
+    const kit = new FontKit();
+    const mk = (id: string, text: string): Selected =>
+      ({ id, source: "codex", ts: "2026-09-16T00:00:00Z", text, score: 3, target: "misc", fun: 3 });
+    const one = mk("one", "한 줄.");
+    const two = mk("two", "두 줄짜리 문장은 이쯤에서 넘어간다. ".repeat(3));
+    const three = mk("three", "세 줄을 가득 채우는 아주 긴 문장이다. ".repeat(6));
+
+    const { timed } = buildTimeline(kit, [one, two, three]);
+    expect(timed.map((tm) => tm.lines.length)).toEqual([1, 2, 3]);
+
+    // 줄 수가 다르면 말풍선 높이도 달라야 한다(줄 하나당 LINE_H=23).
+    expect([1, 2, 3].map(bubbleHeight)).toEqual([63, 86, 109]);
+    expect(bubbleHeight(0)).toBe(63);
+    expect(bubbleHeight(9)).toBe(109);
+
+    // 말풍선 중심은 줄 수와 무관하게 캐릭터 원 중심(104)과 같아야 한다.
+    expect([1, 2, 3].map(bubbleTop)).toEqual([72.5, 61, 49.5]);
+    for (const lineCount of [1, 2, 3]) {
+      expect(bubbleTop(lineCount) + bubbleHeight(lineCount) / 2).toBe(104);
+      // 말풍선이 캔버스(0~200) 안에 들어오고, 푸터(y=191)를 침범하지 않아야 한다.
+      expect(bubbleTop(lineCount)).toBeGreaterThan(20);
+      expect(bubbleTop(lineCount) + bubbleHeight(lineCount)).toBeLessThan(180);
+      // 라벨 기준선(LABEL_Y=34)은 말풍선 위 10px을 유지한다.
+      expect(bubbleTop(lineCount) - (34 + bubbleShift(lineCount))).toBe(10);
+    }
+
+    const svg = renderSvg([one, two, three], "dark", kit);
+    const rect = svg.match(/<rect x="112" y="([\d.]+)" width="512" height="(\d+)"[^>]*>(.*?)<\/rect>/)!;
+    expect(rect).not.toBeNull();
+    // 정적 y·height는 첫 항목 값이어야 애니메이션이 안 도는 뷰어에서도 첫 화면이 맞는다.
+    expect(rect[1]).toBe("72.5");
+    expect(rect[2]).toBe("63");
+
+    const track = (attr: string) => {
+      const m = rect[3]!.match(new RegExp(`<animate attributeName="${attr}" calcMode="discrete" values="([^"]+)" keyTimes="([^"]+)"`))!;
+      expect(m).not.toBeNull();
+      return { values: m[1]!.split(";"), times: m[2]!.split(";").map(Number) };
+    };
+    const h = track("height");
+    const y = track("y");
+    expect(h.values).toEqual(["63", "86", "109"]);
+    expect(y.values).toEqual(["72.5", "61", "49.5"]);
+    // height와 y는 같은 시각에 함께 바뀌어야 상단이 튀지 않는다.
+    expect(y.times).toEqual(h.times);
+    expect(h.times[0]).toBe(0);
+    expect(h.times).toHaveLength(3);
+    expect(h.times.every((t, i) => i === 0 || t > h.times[i - 1]!)).toBe(true);
+
+    // 항목 그룹(라벨·본문·커서)은 말풍선과 같은 오프셋만큼 통째로 내려간다.
+    const shifts = [...svg.matchAll(/<g opacity="0" transform="translate\(0 ([\d.-]+)\)">/g)].map((m) => Number(m[1]));
+    expect(shifts).toEqual([1, 2, 3].map(bubbleShift));
+    expect(shifts).toEqual([28.5, 17, 5.5]);
+
+    // 캐릭터 원과 캔버스 크기는 그대로.
+    expect(svg).toContain('<circle cx="56" cy="104" r="36"');
+    expect(svg).toContain(`width="${640}" height="${200}"`);
+
+    // 줄 수가 같은 항목만 있으면 height·y 값은 각각 하나로 접힌다.
+    const flat = renderSvg([one, mk("one2", "또 한 줄.")], "dark", kit);
+    expect(flat).toMatch(/attributeName="height" calcMode="discrete" values="63" keyTimes="0"/);
+    expect(flat).toMatch(/attributeName="y" calcMode="discrete" values="72.5" keyTimes="0"/);
+  });
+
+  test("the caret blinks with strictly increasing keyTimes and stays visible most of the cycle", () => {
+    const kit = new FontKit();
+    const svg = renderSvg([item], "dark", kit);
+    const m = svg.match(/<rect width="2" height="17" rx="1" fill="[^"]+">.*?<animate attributeName="opacity" values="([^"]+)" keyTimes="([^"]+)"/)!;
+    expect(m).not.toBeNull();
+    expect(m[1]!.split(";")).toEqual(["1", "0"]);
+    const times = m[2]!.split(";").map(Number);
+    expect(times).toEqual([0, 0.6]);
+    expect(new Set(times).size).toBe(times.length);
+  });
+
+  test("the thought dots sit outside the character circle and grow toward the bubble", () => {
+    const kit = new FontKit();
+    const svg = renderSvg([item], "dark", kit);
+    const dots = [...svg.matchAll(/<circle cx="(\d+)" cy="(\d+)" r="([\d.]+)" fill="#161b22"/g)]
+      .map((d) => ({ cx: Number(d[1]), cy: Number(d[2]), r: Number(d[3]) }));
+    expect(dots).toHaveLength(2);
+    for (const d of dots) {
+      const gap = Math.hypot(d.cx - 56, d.cy - 104) - 36 - d.r;
+      expect(gap).toBeGreaterThan(1);
+      expect(d.cx + d.r).toBeLessThanOrEqual(112);
+      // 가장 낮은 말풍선(1줄) 안쪽에 있어야 높이가 변해도 붙어 보인다.
+      expect(d.cy - d.r).toBeGreaterThan(bubbleTop(1));
+      expect(d.cy + d.r).toBeLessThan(bubbleTop(1) + bubbleHeight(1));
+    }
+    const [big, small] = dots;
+    expect(big!.r).toBeGreaterThan(small!.r);
+    // 큰 방울이 말풍선(오른쪽 위) 쪽에 있어야 한다.
+    expect(big!.cx).toBeGreaterThan(small!.cx);
+    expect(big!.cy).toBeLessThan(small!.cy);
+  });
+
   test("renders both themes with a shared kit, including the empty state", () => {
     const kit = new FontKit();
     for (const theme of ["dark", "light"] as const) {
@@ -390,18 +488,52 @@ describe("judge", () => {
   /** 실제 ~/.grumble/judge.json 을 건드리지 않도록 테스트마다 임시 캐시 경로를 쓴다. */
   const tmpCache = () => join(mkdtempSync(join(tmpdir(), "grumble-judge-")), "judge.json");
 
-  test("candidates: masked, recent first, cached and dull ones skipped", () => {
+  test("candidates: masked, recent first, cached ones skipped, plain sentences kept", () => {
     const st = state([
       rec(1, "Hmm, the myproj build is broken again, ugh.", "2026-09-10T00:00:00Z"),
       rec(2, "Weirdly the command hangs in C:\\Users\\me\\Git\\myproj\\x.ps1.", "2026-09-12T00:00:00Z"),
+      // 표지어가 없어 휴리스틱으로는 탈락하던 문장도 이제 판정 대상이다.
       rec(3, "I will update the file.", "2026-09-13T00:00:00Z"),
       rec(4, "Strangely the tests failed again for no reason.", "2026-09-11T00:00:00Z"),
     ]);
-    const cache: JudgeCache = { version: 1, items: { j4: { fun: 5, text: "x", at: "t" } } };
+    const cache: JudgeCache = { version: 1, items: { j4: { fun: 5, text: "x", at: "t", pv: PROMPT_VERSION } } };
     const cands = candidates(st, cache, 10);
-    expect(cands.map((c) => c.id)).toEqual(["j2", "j1"]);
-    expect(cands[0]!.text).toBe("Weirdly the command hangs in [path].");
-    expect(candidates(st, cache, 1).map((c) => c.id)).toEqual(["j2"]);
+    expect(cands.map((c) => c.id)).toEqual(["j3", "j2", "j1"]);
+    expect(cands[1]!.text).toBe("Weirdly the command hangs in [path].");
+    expect(candidates(st, cache, 1).map((c) => c.id)).toEqual(["j3"]);
+  });
+
+  test("candidates drops obvious non-sentences (title only, too short, mask-only)", () => {
+    const st = state([
+      rec(1, "**Planning tests**", "2026-09-13T00:00:00Z"),
+      rec(2, "Hmm ok.", "2026-09-12T00:00:00Z"),
+      rec(3, "C:\\Users\\me\\Git\\myproj\\x.ps1 C:\\Users\\me\\Git\\myproj\\y.ps1", "2026-09-11T00:00:00Z"),
+      rec(4, "The encoding fight continues, as always.", "2026-09-10T00:00:00Z"),
+    ]);
+    expect(candidates(st, emptyCache(), 10).map((c) => c.id)).toEqual(["j4"]);
+  });
+
+  test("a judgment from an older prompt version is stale: dropped from the map, judged again", () => {
+    const st = state([rec(1, "The encoding fight continues, as always.", "2026-09-10T00:00:00Z")]);
+    const old: JudgeCache = { version: 1, items: { j1: { fun: 9, mood: "amused", text: "x", at: "t" } } };
+    expect(judgmentMap(old).size).toBe(0);
+    expect(candidates(st, old, 10).map((c) => c.id)).toEqual(["j1"]);
+    const current: JudgeCache = { version: 1, items: { j1: { fun: 9, text: "x", at: "t", pv: PROMPT_VERSION } } };
+    expect(judgmentMap(current).get("j1")).toEqual({ fun: 9, mood: undefined });
+    expect(candidates(st, current, 10)).toEqual([]);
+  });
+
+  test("buildPrompt states the scoring bands and the mood vocabulary", () => {
+    const p = buildPrompt([{ id: "x", text: "Hmm, broken again." }]);
+    expect(p).toContain("7~10");
+    expect(p).toContain("0~3");
+    expect(p).toContain("0~2로 눌러라");
+    for (const m of ["sarcastic", "exasperated", "resigned", "smug", "sheepish", "deadpan", "annoyed", "confused", "amused", "neutral"]) {
+      expect(p).toContain(m);
+    }
+    // 기준선 예시가 점수와 함께 들어 있다.
+    expect(p).toContain("윈도우답네요");
+    expect(p).toContain("테스트가 실패했습니다");
   });
 
   test("buildPrompt sends the masked sentences as json data, not as instructions", () => {

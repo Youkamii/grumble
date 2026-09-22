@@ -2,6 +2,8 @@
  * 선별된 문장 → README용 SMIL 애니메이션 SVG.
  * - JS·CSS·외부 리소스 금지(GitHub <img> 제약). 글자는 전부 path(<use>), 애니메이션은 SMIL만.
  * - 타이핑/삭제: 줄마다 clipPath 사각형의 width를 discrete keyTimes로 계단식 이동.
+ * - 말풍선 높이: 항목 시작 시각마다 <rect>의 height/y를 discrete로 갈아끼워 줄 수에 맞추고, 캐릭터 원 중심에 세로 중앙 정렬한다.
+ *   항목 그룹(라벨·본문·커서)은 항목마다 따로 그리므로 정적 translate로 같은 오프셋을 먹인다.
  * - 전체 루프 길이 L초 안에서 모든 애니메이션이 dur=L, repeatCount=indefinite 로 동기화된다.
  */
 import { readFileSync } from "node:fs";
@@ -23,7 +25,7 @@ export const THEMES: Record<"dark" | "light", Theme> = {
 export const W = 640;
 export const H = 200;
 const CHAR_CX = 56, CHAR_CY = 104, CHAR_R = 36;
-const BUBBLE = { x: 112, y: 44, w: 512, h: 128, rx: 16 };
+const BUBBLE = { x: 112, y: 44, w: 512, rx: 16 };
 const TEXT_X = BUBBLE.x + 20;
 const TEXT_W = BUBBLE.w - 40;
 const TEXT_SIZE = 14;
@@ -36,6 +38,27 @@ const DEL_MS = 13;
 const HOLD_MS = 2800;
 const GAP_MS = 450;
 const MIN_TYPE_MS = 900;
+/** 말풍선 위아래 여백 합. 본문 높이(LINE_H × 줄 수)에 더해 말풍선 높이가 된다. */
+const BUBBLE_PAD = 40;
+
+/** 줄 수에 맞춘 말풍선 높이. */
+export function bubbleHeight(lineCount: number): number {
+  return LINE_H * Math.min(Math.max(lineCount, 1), MAX_LINES) + BUBBLE_PAD;
+}
+
+/** 말풍선 상단. 높이가 어떻든 말풍선 중심이 캐릭터 원 중심(CHAR_CY)과 맞도록 위로 올린다. */
+export function bubbleTop(lineCount: number): number {
+  return CHAR_CY - bubbleHeight(lineCount) / 2;
+}
+
+/**
+ * 항목 그룹(라벨·본문·클립·커서)을 통째로 내릴 거리.
+ * BUBBLE.y를 레이아웃 기준선으로 두고, 실제 말풍선 상단과의 차이만큼 translate 한다.
+ * 그룹은 항목별로 따로 그려지므로 애니메이션 없이 정적 transform이면 충분하다.
+ */
+export function bubbleShift(lineCount: number): number {
+  return bubbleTop(lineCount) - BUBBLE.y;
+}
 
 const NAMES: Record<Selected["source"], string> = { claude: "Claude Code", codex: "Codex" };
 
@@ -139,8 +162,10 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     const labelUses = labelLines[0]!.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, TEXT_X + c.x, LABEL_Y)).join("");
 
     const vis = discrete("opacity", [[0, 0], [start, 1], [end + Math.min(GAP_MS / 2, 200), 0]], loopMs);
-    const cursor = `<rect width="1.6" height="${TEXT_SIZE + 3}" fill="${th.cursor}">${discrete("x", cursorX, loopMs)}${discrete("y", cursorY, loopMs)}<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.5;0.5;1" calcMode="discrete" dur="1.06s" repeatCount="indefinite"/></rect>`;
-    groups.push(`<g opacity="0">${vis}<g fill="${th.muted}">${labelUses}</g><g fill="${th.ink}">${lineSvgs.join("")}</g>${cursor}</g>`);
+    // 깜빡임은 켜짐 60% / 꺼짐 40%. 정지 화면(README 썸네일·스크린샷)에서도 대개 보이도록.
+    const cursor = `<rect width="2" height="${TEXT_SIZE + 3}" rx="1" fill="${th.cursor}">${discrete("x", cursorX, loopMs)}${discrete("y", cursorY, loopMs)}<animate attributeName="opacity" values="1;0" keyTimes="0;0.6" calcMode="discrete" dur="1.1s" repeatCount="indefinite"/></rect>`;
+    const dy = bubbleShift(lines.length);
+    groups.push(`<g opacity="0" transform="translate(0 ${n(dy)})">${vis}<g fill="${th.muted}">${labelUses}</g><g fill="${th.ink}">${lineSvgs.join("")}</g>${cursor}</g>`);
   });
 
   // 캐릭터: 현재 항목의 소스 로고만 보인다.
@@ -153,16 +178,24 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
   const logo = (src: Selected["source"], d: string, color: string) =>
     `<g opacity="0">${timed.length ? logoVis(src) : ""}<path transform="translate(${n(CHAR_CX - 12 * scale)} ${n(CHAR_CY - 12 * scale)}) scale(${n(scale)})" fill="${color}" d="${d}"/></g>`;
 
-  // 생각 말풍선: 본체 + 캐릭터 쪽으로 작아지는 방울 둘.
-  const bubble = `<rect x="${BUBBLE.x}" y="${BUBBLE.y}" width="${BUBBLE.w}" height="${BUBBLE.h}" rx="${BUBBLE.rx}" fill="${th.bubble}" stroke="${th.stroke}"/>` +
-    `<circle cx="${CHAR_CX + CHAR_R + 10}" cy="${CHAR_CY - 6}" r="6" fill="${th.bubble}" stroke="${th.stroke}"/>` +
-    `<circle cx="${CHAR_CX + CHAR_R + 2}" cy="${CHAR_CY + 10}" r="3.5" fill="${th.bubble}" stroke="${th.stroke}"/>`;
+  // 생각 말풍선: 본체(줄 수에 따라 높이·상단이 바뀐다) + 캐릭터 쪽으로 작아지는 방울 둘.
+  // 말풍선은 항상 캐릭터 원 중심을 기준으로 위아래 대칭이라, 가장 낮은 1줄 말풍선의 y 범위 안에
+  // 방울을 두면 높이가 어떻게 변해도 붙어 보인다(그래서 방울에는 애니메이션이 필요 없다).
+  const lineCounts = timed.map((tm) => tm.lines.length);
+  const heightAnim = timed.length
+    ? discrete("height", timed.map((tm, i) => [tm.start, bubbleHeight(lineCounts[i]!)] as [number, number]), loopMs) +
+      discrete("y", timed.map((tm, i) => [tm.start, bubbleTop(lineCounts[i]!)] as [number, number]), loopMs)
+    : "";
+  const firstLines = timed[0]?.lines.length ?? 1;
+  const bubble = `<rect x="${BUBBLE.x}" y="${n(bubbleTop(firstLines))}" width="${BUBBLE.w}" height="${bubbleHeight(firstLines)}" rx="${BUBBLE.rx}" fill="${th.bubble}" stroke="${th.stroke}">${heightAnim}</rect>` +
+    `<circle cx="105" cy="112" r="6" fill="${th.bubble}" stroke="${th.stroke}"/>` +
+    `<circle cx="95" cy="124" r="3.5" fill="${th.bubble}" stroke="${th.stroke}"/>`;
 
   const footer = layout(kit, "grumble — what the model muttered", 9, 300, 1)[0]!;
   const footerUses = footer.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, BUBBLE.x + BUBBLE.w - footer.width + c.x, H - 9)).join("");
 
   const empty = timed.length === 0
-    ? (() => { const l = layout(kit, "(no grumbles yet)", TEXT_SIZE, TEXT_W, 1)[0]!; return `<g fill="${th.muted}">${l.chars.map((c) => use(c.glyph.id, TEXT_X + c.x, lineY(0))).join("")}</g>`; })()
+    ? (() => { const l = layout(kit, "(no grumbles yet)", TEXT_SIZE, TEXT_W, 1)[0]!; return `<g fill="${th.muted}" transform="translate(0 ${n(bubbleShift(1))})">${l.chars.map((c) => use(c.glyph.id, TEXT_X + c.x, lineY(0))).join("")}</g>`; })()
     : "";
 
   const aria = items.map((s) => `${NAMES[s.source]}: ${s.text}`).join(" / ");
