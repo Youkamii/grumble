@@ -1,5 +1,5 @@
 {
-  "renderedAt": "2026-09-24T21:07:08.108Z",
+  "renderedAt": "2026-09-25T03:05:09.438Z",
   "items": [
     {
       "source": "claude",
@@ -21,21 +21,21 @@
     },
     {
       "source": "codex",
-      "ts": "2025-10-18T06:43:10.486Z",
-      "text": "It’s important to mention the portal '장애 안내' since network calls may fail, advising the user to try again later.",
-      "target": "user"
-    },
-    {
-      "source": "codex",
-      "ts": "2025-10-26T23:39:36.042Z",
-      "text": "I'm examining why the overlay still blocks clicks initially and how it covers the controller window.",
-      "target": "misc"
+      "ts": "2025-10-18T06:50:03.219Z",
+      "text": "Alternatively, we could try \"과제명 A\" with the [url] API, but we've run into TLS issues and service disruptions previously, along with \"unexp…",
+      "target": "tool"
     },
     {
       "source": "codex",
       "ts": "2025-10-24T11:29:10.984Z",
       "text": "Hmm, there's also the issue about '[quote]' needing clarification on its usage with holidays.",
       "target": "misc"
+    },
+    {
+      "source": "codex",
+      "ts": "2025-12-05T04:16:27.871Z",
+      "text": "The error with question marks in the file path likely stems from the environment's encoding handling, possibly cp949 on Windows, causing in…",
+      "target": "tool"
     }
   ]
 }
