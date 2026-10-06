@@ -24,7 +24,8 @@ import {
 import { codexLine } from "./sources/codex.ts";
 import { claudeLine } from "./sources/claude.ts";
 import { confessionSentences, isConfession, stripMarkdown, CONFESSION_RE } from "./sources/confession.ts";
-import { displaySentence } from "./score.ts";
+import { answerRecords, mutterLines } from "./sources/answer.ts";
+import { displaySentence, MUTTER_CUE, scoreSentence } from "./score.ts";
 import { migrateState, STATE_VERSION } from "./scan.ts";
 import { labelFor } from "./render.ts";
 import type { GrumbleRecord } from "./types.ts";
@@ -728,9 +729,55 @@ describe("sources", () => {
     expect(migrateState({ version: 3, records: [], files: {} })).toBeNull();
     expect(migrateState({ version: 1 })).toBeNull();
   });
-  test("the bubble label says correcting… for a confession", () => {
+  test("the bubble label says correcting… for a confession, muttering… for a mutter, this week… for stats", () => {
     expect(labelFor({ source: "claude", ts: "2026-09-20T01:02:03Z" })).toBe("Claude Code  ·  thinking…  ·  2026-09-20");
     expect(labelFor({ source: "codex", ts: "2026-09-20T01:02:03Z", kind: "confession" })).toBe("Codex  ·  correcting…  ·  2026-09-20");
+    expect(labelFor({ source: "claude", ts: "2026-09-20T01:02:03Z", kind: "mutter" })).toBe("Claude Code  ·  muttering…  ·  2026-09-20");
+    expect(labelFor({ source: "codex", ts: "2026-09-20T01:02:03Z", kind: "stats" })).toBe("Codex  ·  this week…  ·  2026-09-20");
+  });
+
+  // --- 꿍시렁 채널(#11) ---
+  test("mutterLines pulls `꿍시렁:` lines out of the answer, tolerating bold and a full-width colon", () => {
+    const text = "빌드를 고쳤습니다.\n\n**꿍시렁:** 인코딩이 또. 윈도우에서 한글은 매번 처음 보는 사람처럼 군다.\n꿍시렁： 두 번째 줄도 된다.   \n끝.";
+    const { lines, rest } = mutterLines(text);
+    expect(lines).toEqual(["인코딩이 또. 윈도우에서 한글은 매번 처음 보는 사람처럼 군다.", "두 번째 줄도 된다."]);
+    expect(rest).not.toContain("꿍시렁");
+    expect(rest).toContain("빌드를 고쳤습니다.");
+    // 줄 첫머리가 아니면 꿍시렁이 아니다(본문에서 단어로 언급한 것).
+    expect(mutterLines("grumble은 꿍시렁: 접두사를 모은다.").lines).toEqual([]);
+    expect(mutterLines("꿍시렁:").lines).toEqual([]);
+  });
+  test("answerRecords yields mutter and confession records without double-counting a confessional mutter", () => {
+    const text = "제가 잘못 봤네요, 경로가 거꾸로였습니다. 고쳤습니다.\n꿍시렁: 또 내가 잘못 봤다. 세 번째면 습관이다.";
+    const out = answerRecords("claude", "2026-10-06T00:00:00Z", text, { cwd: "C:\\q", session: "s", model: "m" });
+    expect(out.map((r) => [r.kind, r.text])).toEqual([
+      ["mutter", "또 내가 잘못 봤다. 세 번째면 습관이다."],
+      ["confession", "제가 잘못 봤네요, 경로가 거꾸로였습니다. 고쳤습니다."],
+    ]);
+    expect(new Set(out.map((r) => r.id)).size).toBe(2);
+    expect(out[0]).toMatchObject({ source: "claude", cwd: "C:\\q", session: "s", model: "m" });
+    expect(answerRecords("codex", "t", "", { cwd: "", session: "", model: "" })).toEqual([]);
+  });
+  test("claude and codex answer text both yield mutter records", () => {
+    const line = JSON.stringify({ type: "assistant", timestamp: "2026-10-06T00:00:00Z", cwd: "C:\\q", sessionId: "s", message: { model: "claude-fable-5-1", content: [
+      { type: "text", text: "다 됐습니다.\n\n꿍시렁: 테스트가 로컬에선 되고 CI에서만 터진다. 당연하지, 늘 그랬으니까." },
+    ] } });
+    expect(claudeLine(line).map((r) => [r.kind, r.text])).toEqual([["mutter", "테스트가 로컬에선 되고 CI에서만 터진다. 당연하지, 늘 그랬으니까."]]);
+    const ctx = { cwd: "C:\\p", session: "sess1", model: "gpt-x" };
+    const msg = JSON.stringify({ timestamp: "2026-10-06T00:00:00Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "완료.\n꿍시렁: 승인 세 번. 내가 승인 버튼을 눌렀어야 했나." }] } });
+    expect(codexLine(msg, ctx).map((r) => [r.kind, r.text])).toEqual([["mutter", "승인 세 번. 내가 승인 버튼을 눌렀어야 했나."]]);
+  });
+  test("displaySentence keeps a mutter whole and adds the mutter cue so it clears the heuristic threshold", () => {
+    const text = "캐시가 너무 신선해서 실패. 신선해서.";
+    const d = displaySentence({ text, kind: "mutter" })!;
+    expect(d.text).toBe(text);
+    expect(d.score).toBe(scoreSentence(text) + MUTTER_CUE);
+    expect(MUTTER_CUE).toBe(3);
+    expect(displaySentence({ text: "  ", kind: "mutter" })).toBeNull();
+    // 표지어가 하나도 없는 짧은 줄도 select의 휴리스틱 문턱(3)을 넘는다.
+    const r: GrumbleRecord = { id: "m1", source: "claude", ts: "2026-09-17T00:00:00Z", text: "오늘도 윈도우가 이겼다. 내일은 모르겠다.", cwd: "", session: "s", model: "m", kind: "mutter" };
+    const out = select([r], { perSource: 1, now: new Date("2026-09-18T00:00:00Z") });
+    expect(out.map((o) => [o.kind, o.text])).toEqual([["mutter", "오늘도 윈도우가 이겼다. 내일은 모르겠다."]]);
   });
   test("confession records carry kind through select", () => {
     const r: GrumbleRecord = { id: "c1", source: "claude", ts: "2026-09-17T00:00:00Z", text: "제가 잘못 봤네요, 그 함수는 이미 있었습니다.", cwd: "", session: "s", model: "m", kind: "confession" };

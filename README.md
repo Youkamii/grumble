@@ -103,10 +103,25 @@ bun run unregister             # 자동 발행 해제
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `assistant.message.content[].thinking` — 본문이 있는 블록만(대부분은 서명만 남음) |
 | Claude Code (정정·자백) | 같은 파일 | `assistant.message.content[].text` 중 **스스로를 정정하는 문장**("제가 잘못 봤네요", "I misread", "Correction:" 등)만. 남(사용자)을 주어로 한 문장과 거절문("죄송하지만 … 할 수 없습니다")은 1인칭 표지가 없으면 뺀다. 걸린 문장 + **같은 문단의** 다음 문장 한 개를 `kind: "confession"` 레코드로. 수집 전에 코드블록은 `[code]`로 바꾸고 인용(`>`) 줄은 통째로 버린다 — 답변 본문은 정정된 "진짜 값"과 남의 말을 옮기는 자리라서. 말풍선에는 두 문장을 통째로 보이고(문장을 고르면 자백 아닌 문장이 라벨을 달 수 있다) 라벨은 `correcting…` |
 | Codex (정정·자백) | 같은 파일 | `response_item.payload.message(role=assistant).content[].output_text` 중 자백 문장만. `[external_agent…` 중계 메시지는 제외 |
+| Claude Code / Codex (꿍시렁) | 같은 파일 | 답변 본문에서 줄 첫머리가 `꿍시렁:`인 줄(굵게·전각 콜론 허용)을 `kind: "mutter"` 레코드로. 모델이 스스로 꿍시렁이라고 표시한 말이라 표지어 없이도 후보가 된다(+3). 라벨은 `muttering…`. 아래 '꿍시렁 채널' 참조 |
 
 정정·자백 채널은 state v2에서 들어왔다. v1 state를 읽으면 **Claude 로그 커서만 비워 한 번 전체 재스캔**한다(4 GB, 1분 안팎). Claude/Codex 구분은 커서 경로(`.codex`·`remote/<host>/codex` 세그먼트)로 한다. Codex 폴더는 수십 GB라 재스캔하지 않으므로 Codex 자백은 그 뒤부터 쌓인다. 기존 레코드는 id(source+ts+text 해시)로 중복 제거되어 두 번 들어오지 않는다.
 
 제목 한 줄뿐인 요약(`**Planning tests**`)은 속마음이 아니라 진행 표시라 수집 단계에서 버린다.
+
+## 꿍시렁 채널 — 모델에게 직접 투덜거릴 자리를 준다
+
+로그의 thinking은 다듬어진 보고이고 답변은 정중한 존댓말이라, 판정 500건 중 7점 이상이 1건이었다. 재료의 천장은
+선별로 못 넘는다. 그래서 모델에게 **채널을 하나 준다**: 전역 `~/.claude/CLAUDE.md`(개인 규칙), `~/AGENTS.md`(미러),
+`~/.codex/AGENTS.md`에 이런 규칙을 둔다.
+
+> 작업 중 뭔가 꼬였거나, 어이없거나, 같은 실수를 또 했거나, 도구·OS·환경이 속을 썩였을 때만 응답 **맨 끝**에
+> `꿍시렁:`으로 시작하는 한 줄을 남긴다. 반말 혼잣말로, 솔직하고 짧게(60자 안쪽). 경로·파일명·계정명·프로젝트명은
+> 넣지 않는다(공개 README에 올라간다). 평범하게 끝난 턴에는 남기지 않는다.
+
+grumble은 답변 본문에서 그 줄만 건져 `kind: "mutter"`로 모은다(`src/sources/answer.ts`). 모델이 실제로 한 말이라
+"what the model muttered"가 그대로 성립하고, 꿍시렁 줄은 자백 추출 대상에서 빠져 두 채널에 겹치지 않는다.
+규칙은 2026-10-06부터라 그 전 로그에는 없다.
 
 ## 원격 기계 (sync)
 

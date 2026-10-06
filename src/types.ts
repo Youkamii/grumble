@@ -1,4 +1,11 @@
-/** 추론 요약 한 건. 로컬 state에만 저장되며 공개물에는 mask/select를 거친 문장만 나간다. */
+/**
+ * 레코드 종류. 없으면 추론 요약(thinking).
+ *  - confession: 답변 본문의 정정·자백 문장(#10)
+ *  - mutter: 모델이 `꿍시렁:`으로 직접 남긴 한 줄(#11)
+ */
+export type RecordKind = "confession" | "mutter";
+
+/** 레코드 한 건. 로컬 state에만 저장되며 공개물에는 mask/select를 거친 문장만 나간다. */
 export interface GrumbleRecord {
   /** source+timestamp+text 해시. 세션 resume로 복제된 레코드 중복 제거용. */
   id: string;
@@ -12,8 +19,7 @@ export interface GrumbleRecord {
   model: string;
   /** 원격 기계에서 가져온 로그면 그 ssh 별칭. 로컬은 undefined. 공개물에는 내보내지 않는다. */
   host?: string;
-  /** 레코드 종류. 없으면 추론 요약(thinking). confession은 답변 본문의 정정·자백 문장(#10). */
-  kind?: "confession";
+  kind?: RecordKind;
 }
 
 export interface FileCursor {

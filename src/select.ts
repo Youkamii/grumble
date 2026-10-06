@@ -17,7 +17,7 @@
  * 정렬 최상위에 놓이고 창·쿨다운·날짜·mood 검사를 면제받아 자리를 지킨다(발행마다 통째로 갈리지 않게).
  * 그 뒤 마지막 노출(last)로부터 COOLDOWN_DAYS 동안은 0~2단계에서 빠진다.
  */
-import type { GrumbleRecord } from "./types.ts";
+import type { GrumbleRecord, RecordKind } from "./types.ts";
 import { mask, MASK_TOKEN_RE, projectNamesFromCwds, defaultNames } from "./mask.ts";
 import { displaySentence, type Sentence, type Target } from "./score.ts";
 import { configNames } from "./sync.ts";
@@ -63,8 +63,8 @@ export interface Selected {
   mood?: string;
   /** LLM 판정이 배치 안에서 골라낸 문장. */
   pick?: boolean;
-  /** confession이면 답변 본문의 정정·자백 문장. 없으면 추론 요약. */
-  kind?: "confession";
+  /** 레코드 종류(types.ts RecordKind). stats는 레코드가 아니라 stats.ts가 만드는 통계 말풍선. 없으면 추론 요약. */
+  kind?: RecordKind | "stats";
 }
 
 export interface SelectOptions {

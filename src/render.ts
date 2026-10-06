@@ -62,9 +62,11 @@ export function bubbleShift(lineCount: number): number {
 
 const NAMES: Record<Selected["source"], string> = { claude: "Claude Code", codex: "Codex" };
 
-/** 말풍선 위 작은 라벨. 자백은 'thinking…' 대신 'correcting…'. */
+const VERBS: Record<string, string> = { confession: "correcting…", mutter: "muttering…", stats: "this week…" };
+
+/** 말풍선 위 작은 라벨. 종류별로 동사가 다르다: thinking…/correcting…/muttering…/this week…. */
 export function labelFor(item: Pick<Selected, "source" | "ts" | "kind">): string {
-  const verb = item.kind === "confession" ? "correcting…" : "thinking…";
+  const verb = VERBS[item.kind ?? ""] ?? "thinking…";
   return `${NAMES[item.source]}  ·  ${verb}  ·  ${item.ts.slice(0, 10)}`;
 }
 

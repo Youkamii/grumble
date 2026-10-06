@@ -1,5 +1,5 @@
 /**
- * Codex CLI 세션(~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) → reasoning summary + 답변 본문의 정정·자백.
+ * Codex CLI 세션(~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) → reasoning summary + 답변 본문(answer.ts: 꿍시렁 줄·자백).
  * 레코드 형태:
  *   {"timestamp":"...","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"..."}]}}
  *   {"timestamp":"...","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"..."}]}}
@@ -8,7 +8,7 @@
  */
 import type { GrumbleRecord } from "../types.ts";
 import { recordId } from "../util.ts";
-import { confessionSentences } from "./confession.ts";
+import { answerRecords } from "./answer.ts";
 
 export const CODEX_MARKER = '"summary_text"';
 export const CODEX_TEXT_MARKER = '"output_text"';
@@ -38,9 +38,7 @@ export function codexLine(line: string, ctx: CodexCtx): GrumbleRecord[] {
   if (p?.type === "message" && p.role === "assistant" && Array.isArray(p.content)) {
     for (const c of p.content) {
       if (c?.type !== "output_text" || typeof c.text !== "string") continue;
-      for (const text of confessionSentences(c.text)) {
-        out.push({ id: recordId("codex", ts, text), source: "codex", ts, text, cwd: ctx.cwd, session: ctx.session, model: ctx.model, kind: "confession" });
-      }
+      out.push(...answerRecords("codex", ts, c.text, { cwd: ctx.cwd, session: ctx.session, model: ctx.model }));
     }
     return out;
   }
