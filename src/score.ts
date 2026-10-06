@@ -90,6 +90,19 @@ export function scoreSentence(s: string): number {
   return score;
 }
 
+/**
+ * 레코드 → 말풍선에 보일 문장. 추론 요약은 bestSentence로 한 문장을 고르지만, 자백 레코드(kind=confession)는
+ * "자백 문장 + 맥락 한 문장"을 통째로 쓴다. 문장을 고르면 자백이 아닌 뒤 문장이 correcting… 라벨을 달고 나갈 수 있다.
+ * 점수는 두 문장 중 높은 쪽(휴리스틱 경로의 문턱용).
+ */
+export function displaySentence(r: { text: string; kind?: "confession" }): Sentence | null {
+  if (r.kind !== "confession") return bestSentence(r.text);
+  const sentences = splitSentences(r.text);
+  if (sentences.length === 0) return null;
+  const text = sentences.join(" ");
+  return { text, score: Math.max(...sentences.map(scoreSentence)), target: classifyTarget(text) };
+}
+
 /** 요약 원문에서 가장 꿍시렁다운 문장 하나. 제목만 있으면 제목을 감점해서 반환. */
 export function bestSentence(raw: string): Sentence | null {
   const { title, body } = splitTitle(raw);

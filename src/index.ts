@@ -23,10 +23,9 @@ async function main(): Promise<void> {
   }
   if (cmd === "preview") {
     // 실데이터로 선별 결과를 눈으로 확인하는 용도. 공개물과 같은 마스킹을 거친다.
-    const { select, parsePerSource } = await import("./select.ts");
+    const { select, parsePerSource, exposureState } = await import("./select.ts");
     const { judgmentMap } = await import("./judge.ts");
     const { exposureMap } = await import("./exposure.ts");
-    const { exposureState } = await import("./select.ts");
     const state = loadState();
     const arg = process.argv.slice(3).find((a) => !a.startsWith("--"));
     const n = parsePerSource(arg);

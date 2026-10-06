@@ -23,7 +23,8 @@ import {
 } from "./sync.ts";
 import { codexLine } from "./sources/codex.ts";
 import { claudeLine } from "./sources/claude.ts";
-import { confessionSentences, stripMarkdown, CONFESSION_RE } from "./sources/confession.ts";
+import { confessionSentences, isConfession, stripMarkdown, CONFESSION_RE } from "./sources/confession.ts";
+import { displaySentence } from "./score.ts";
 import { migrateState, STATE_VERSION } from "./scan.ts";
 import { labelFor } from "./render.ts";
 import type { GrumbleRecord } from "./types.ts";
@@ -308,7 +309,7 @@ describe("select", () => {
   });
   // --- 신선도(#8): sticky / cooldown / window / mood ---
   const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
-  const expo = (id: string, hoursSinceLast: number): [string, Exposure] => [id, { first: hoursAgo(hoursSinceLast + 1), last: hoursAgo(hoursSinceLast) }];
+  const expo = (id: string, hoursSinceLast: number): [string, Exposure] => [id, { first: hoursAgo(hoursSinceLast), last: hoursAgo(hoursSinceLast) }];
   test("exposureState: sticky within a day, cooling for two weeks, then none", () => {
     expect(exposureState(undefined, NOW)).toBe("none");
     expect(exposureState({ first: "x", last: "not-a-date" }, NOW)).toBe("none");
@@ -317,6 +318,27 @@ describe("select", () => {
     expect(exposureState(expo("a", STICKY_HOURS)[1], NOW)).toBe("cooling");
     expect(exposureState(expo("a", COOLDOWN_DAYS * 24 - 1)[1], NOW)).toBe("cooling");
     expect(exposureState(expo("a", COOLDOWN_DAYS * 24)[1], NOW)).toBe("none");
+    // sticky는 first 기준: 30시간째 연속 노출 중이면(last는 1시간 전) 더는 sticky가 아니라 cooling.
+    expect(exposureState({ first: hoursAgo(30), last: hoursAgo(1) }, NOW)).toBe("cooling");
+  });
+  test("a sticky sentence is exempt from the one-per-day and mood rules, so it keeps its slot for the day", () => {
+    // 같은 날 A(7) B(6) C(5)가 전부 실려 있고(sticky), 다른 날 N(4)이 새로 왔다. 세 슬롯은 그대로다.
+    const recs = [
+      sameDay(1, "codex", "The deploy step finished without incident."),
+      sameDay(2, "codex", "The build finished, nothing to see here."),
+      sameDay(3, "codex", "The lint run came back clean."),
+      rec(4, "codex", "The docs build is green."),
+    ];
+    const judgments = new Map([
+      ["id1", { fun: 7, mood: "smug" }], ["id2", { fun: 6, mood: "smug" }], ["id3", { fun: 5, mood: "smug" }], ["id4", { fun: 4, mood: "deadpan" }],
+    ]);
+    const exposure = new Map([expo("id1", 3), expo("id2", 3), expo("id3", 3)]);
+    expect(select(recs, { perSource: 3, judgments, exposure, now: NOW }).map((o) => o.id)).toEqual(["id1", "id2", "id3"]);
+    // 노출 기록이 없으면 날짜·mood 규칙대로 N이 들어온다.
+    expect(select(recs, { perSource: 3, judgments, now: NOW }).map((o) => o.id)).toEqual(["id1", "id4", "id2"]);
+    // sticky라도 재판정으로 문턱 아래로 떨어지면 놓아준다.
+    const dull = new Map([...judgments, ["id1", { fun: 1, mood: "neutral" }]]);
+    expect(select(recs, { perSource: 3, judgments: dull, exposure, now: NOW }).map((o) => o.id)).toEqual(["id2", "id3", "id4"]);
   });
   test("a sentence shown within the last day keeps its slot even against a better newcomer", () => {
     const recs = [
@@ -404,16 +426,21 @@ describe("select", () => {
 describe("exposure", () => {
   const NOW = new Date("2026-09-18T00:00:00Z");
   const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
-  test("recordExposure keeps first, bumps last, prunes stale entries", () => {
+  test("recordExposure: first survives a continuous streak, resets after a gap, last always bumps, stale entries pruned", () => {
     const cache = emptyExposure();
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
     cache.items["old"] = { first: daysAgo(PRUNE_DAYS + 5), last: daysAgo(PRUNE_DAYS + 1) };
-    cache.items["kept"] = { first: daysAgo(10), last: daysAgo(10) };
+    cache.items["streak"] = { first: hoursAgo(18), last: hoursAgo(6) }; // 6시간 전 commit에도 실렸다 → 같은 연속 노출
+    cache.items["back"] = { first: daysAgo(10), last: daysAgo(10) }; // 열흘 쉬었다 돌아옴 → 새 연속 노출
     cache.items["bad"] = { first: "x", last: "not-a-date" };
-    recordExposure(cache, ["kept", "new"], NOW);
-    expect(Object.keys(cache.items).sort()).toEqual(["kept", "new"]);
-    expect(cache.items["kept"]).toEqual({ first: daysAgo(10), last: NOW.toISOString() });
+    recordExposure(cache, ["streak", "back", "new"], NOW);
+    expect(Object.keys(cache.items).sort()).toEqual(["back", "new", "streak"]);
+    expect(cache.items["streak"]).toEqual({ first: hoursAgo(18), last: NOW.toISOString() });
+    expect(cache.items["back"]).toEqual({ first: NOW.toISOString(), last: NOW.toISOString() });
     expect(cache.items["new"]).toEqual({ first: NOW.toISOString(), last: NOW.toISOString() });
-    expect(PRUNE_DAYS).toBe(COOLDOWN_DAYS * 2);
+    expect(PRUNE_DAYS).toBeGreaterThan(COOLDOWN_DAYS);
+    // 연속 노출 중 commit이 거듭돼도 sticky는 first 기준이라 연장되지 않는다(정합성 리뷰 1번).
+    expect(exposureState(cache.items["streak"], new Date(NOW.getTime() + 7 * 3_600_000))).toBe("cooling");
   });
   test("save/load round-trips and a corrupted file falls back to empty", () => {
     const dir = mkdtempSync(join(tmpdir(), "grumble-expo-"));
@@ -604,6 +631,7 @@ describe("sources", () => {
     // 진행 보고만 있으면 없음. 중계 메시지·빈 본문도 없음.
     expect(confessionSentences("설정을 확인하겠습니다. 테스트가 실패했습니다.")).toEqual([]);
     expect(confessionSentences("[external_agent_tool_call: Bash]\ndescription: 제가 잘못 봤네요")).toEqual([]);
+    expect(confessionSentences("**[external_agent_tool_result]**\nMy mistake, the flag is --force.")).toEqual([]);
     expect(confessionSentences("")).toEqual([]);
     // 남 탓은 자백이 아니다.
     expect(CONFESSION_RE.test("사용자가 잘못 입력했습니다.")).toBe(false);
@@ -612,10 +640,49 @@ describe("sources", () => {
     // '다시 보니'는 관찰이지 자백이 아니다.
     expect(CONFESSION_RE.test("20초 뒤 다시 보니 태그는 저절로 지워져 있었어요.")).toBe(false);
   });
-  test("confession text drops markdown bold, bullets and headings but keeps the words", () => {
+  test("isConfession: third-party subjects and refusals are out unless the sentence is first-person", () => {
+    expect(isConfession("사용자가 오해했을 수 있습니다.")).toBe(false);
+    expect(isConfession("사용자 말이 틀렸습니다.")).toBe(false);
+    expect(isConfession("The user was confused, but I misread the path.")).toBe(true); // 1인칭 표지(I)가 있으면 통과
+    expect(isConfession("사용자 지시를 제가 잘못 읽었습니다.")).toBe(true);
+    expect(isConfession("죄송하지만 그 요청은 도와드릴 수 없습니다.")).toBe(false);
+    expect(isConfession("죄송합니다, 제가 잘못 봤네요.")).toBe(true);
+    expect(isConfession("죄송합니다. 그건 할 수 없습니다.")).toBe(false);
+    expect(isConfession("테스트 기대값이 틀렸습니다.")).toBe(true);
+    expect(isConfession("오해했습니다.")).toBe(true);
+  });
+  test("confession text drops markdown bold, bullets, headings and quotes, fences become [code], identifiers survive", () => {
     expect(stripMarkdown("**제 실수** 개발이 다른 저장소에서 이뤄졌습니다.")).toBe("제 실수 개발이 다른 저장소에서 이뤄졌습니다.");
-    expect(stripMarkdown("## 결과\n- 첫째\n2. 둘째\n> 인용")).toBe("결과\n첫째\n둘째\n인용");
+    expect(stripMarkdown("## 결과\n- 첫째\n2. 둘째\n> 인용")).toBe("결과\n첫째\n둘째\n");
+    expect(stripMarkdown("`__init__.py`와 __dirname은 그대로")).toBe("`__init__.py`와 __dirname은 그대로");
+    expect(stripMarkdown("before\n```\nSMTP_PASS=x\n```\nafter")).toBe("before\n[code]\nafter");
+    expect(stripMarkdown("open ```fence")).toBe("open [code]");
     expect(confessionSentences("**인증: 제 말이 틀렸습니다.** 로그인 화면은 그대로 씁니다.")).toEqual(["인증: 제 말이 틀렸습니다. 로그인 화면은 그대로 씁니다."]);
+  });
+  test("confession context never crosses a paragraph, a fence or a quote (security review 1·2)", () => {
+    // 코드블록 안의 값은 [code]로만 남는다.
+    expect(confessionSentences("I misread the env file. Here is what it actually contains:\n```\nSMTP_USER=admin\nSMTP_PASS=Tiger2024!\n```\nDone."))
+      .toEqual(["I misread the env file. Here is what it actually contains:"]);
+    // 인용(>) 줄은 통째로 사라진다 — 사용자 말이 모델 말로 둔갑하지 않는다.
+    expect(confessionSentences("제가 잘못 봤네요.\n> 김철수 계정 비번 Tiger2024로 로그인이 왜 또 안 되냐고!\n고치겠습니다."))
+      .toEqual(["제가 잘못 봤네요."]);
+    // 다음 문장은 같은 문단 안에서만 붙는다(글머리표 항목은 각각 한 문단).
+    expect(confessionSentences("정리했습니다.\n- 제가 잘못 짚었습니다. 포트는 8080입니다.\n- 다음 항목은 그대로입니다."))
+      .toEqual(["제가 잘못 짚었습니다. 포트는 8080입니다."]);
+  });
+  test("displaySentence shows a confession whole (confession first), but still picks one sentence for thinking", () => {
+    const text = "제 실수였습니다. 빌드가 또 깨졌고 테스트도 실패해서 이상하네요.";
+    // 추론 요약이면 표지어가 많은 뒤 문장이 이긴다.
+    expect(bestSentence(text)!.text).toBe("빌드가 또 깨졌고 테스트도 실패해서 이상하네요.");
+    expect(displaySentence({ text })!.text).toBe("빌드가 또 깨졌고 테스트도 실패해서 이상하네요.");
+    // 자백 레코드는 두 문장을 통째로, 점수는 높은 쪽.
+    const d = displaySentence({ text, kind: "confession" })!;
+    expect(d.text).toBe(text);
+    expect(d.score).toBe(bestSentence(text)!.score);
+    expect(displaySentence({ text: "", kind: "confession" })).toBeNull();
+    // select를 거친 말풍선 문장도 자백으로 시작한다.
+    const r: GrumbleRecord = { id: "c2", source: "claude", ts: "2026-09-17T00:00:00Z", text, cwd: "", session: "s", model: "m", kind: "confession" };
+    expect(select([r], { perSource: 1, now: new Date("2026-09-18T00:00:00Z") })[0]!.text).toBe(text);
   });
   test("claude text blocks yield confession records next to thinking ones", () => {
     const line = JSON.stringify({ type: "assistant", timestamp: "2026-09-20T00:00:00Z", cwd: "C:\\q", sessionId: "s", message: { model: "claude-fable-5-1", content: [
@@ -645,14 +712,17 @@ describe("sources", () => {
     expect(codexLine(JSON.stringify({ timestamp: "t", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "My mistake, retry." }] } }), ctx)).toEqual([]);
     expect(codexLine(JSON.stringify({ timestamp: "t", type: "event_msg", payload: { type: "agent_message", message: "My mistake, retry." } }), ctx)).toEqual([]);
   });
-  test("state v1 migrates to v2 by dropping claude cursors only", () => {
+  test("state v1 migrates to v2 by dropping claude cursors only (by path, not by ctx)", () => {
     const v1 = { version: 1, scannedAt: null, records: [], files: {
-      "C:\\c\\a.jsonl": { size: 1, offset: 1, mtimeMs: 1 },
-      "C:\\x\\rollout.jsonl": { size: 2, offset: 2, mtimeMs: 2, ctx: { cwd: "", session: "", model: "" } },
+      "C:\\Users\\me\\.claude\\projects\\p\\s.jsonl": { size: 1, offset: 1, mtimeMs: 1 },
+      "C:\\Users\\me\\.grumble\\remote\\lia-s1\\claude\\s.jsonl": { size: 1, offset: 1, mtimeMs: 1 },
+      // ctx 도입 전에 기록된 Codex 커서(ctx 없음)도 Codex다 — 지우면 수십 GB를 다시 읽는다.
+      "C:\\Users\\me\\.codex\\sessions\\2026\\08\\r.jsonl": { size: 2, offset: 2, mtimeMs: 2 },
+      "/home/lia/.grumble/remote/lia-s1/codex/r.jsonl": { size: 2, offset: 2, mtimeMs: 2, ctx: { cwd: "", session: "", model: "" } },
     } };
     const m = migrateState(v1)!;
     expect(m.version).toBe(STATE_VERSION);
-    expect(Object.keys(m.files)).toEqual(["C:\\x\\rollout.jsonl"]);
+    expect(Object.keys(m.files).sort()).toEqual(["/home/lia/.grumble/remote/lia-s1/codex/r.jsonl", "C:\\Users\\me\\.codex\\sessions\\2026\\08\\r.jsonl"]);
     // v2는 그대로, 깨진 것은 null.
     expect(migrateState({ version: 2, scannedAt: null, records: [], files: {} })!.version).toBe(2);
     expect(migrateState({ version: 3, records: [], files: {} })).toBeNull();
@@ -691,6 +761,11 @@ describe("judge", () => {
     expect(cands.map((c) => c.id)).toEqual(["j3", "j2", "j1"]);
     expect(cands[1]!.text).toBe("Weirdly the command hangs in [path].");
     expect(candidates(st, cache, 1).map((c) => c.id)).toEqual(["j3"]);
+    // 공개 문장과 같은 140자 상한으로 잘라 보낸다(보안 리뷰 4번).
+    const long = state([rec(9, "Hmm, " + "the build is broken again and again, ".repeat(8), "2026-09-14T00:00:00Z")]);
+    const t = candidates(long, emptyCache(), 10)[0]!.text;
+    expect([...t].length).toBeLessThanOrEqual(140);
+    expect(t.endsWith("…")).toBe(true);
   });
 
   test("candidates drops obvious non-sentences (title only, too short, mask-only)", () => {

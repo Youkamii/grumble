@@ -11,7 +11,8 @@ export const CLAUDE_MARKER = '"thinking":"';
 export const CLAUDE_TEXT_MARKER = '"type":"text"';
 
 export function claudeLine(line: string): GrumbleRecord[] {
-  if (!line.includes('"assistant"') || (!line.includes(CLAUDE_MARKER) && !line.includes(CLAUDE_TEXT_MARKER))) return [];
+  // user 줄(tool_result)에도 "assistant" 문자열은 흔하다. 최상위 type으로 거르면 JSON.parse 비용이 줄어든다.
+  if (!line.includes('"type":"assistant"') || (!line.includes(CLAUDE_MARKER) && !line.includes(CLAUDE_TEXT_MARKER))) return [];
   let o: any;
   try { o = JSON.parse(line); } catch { return []; }
   if (o?.type !== "assistant") return [];

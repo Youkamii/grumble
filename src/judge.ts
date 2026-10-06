@@ -1,6 +1,6 @@
 /**
- * LLM 재미 판정. 휴리스틱으로 거른 후보의 **마스킹된 문장**만 claude CLI(haiku)에 보내고
- * 0~10 재미 점수와 한 단어 mood를 받아 ~/.grumble/judge.json 에 캐시한다.
+ * LLM 재미 판정. 아직 판정 안 된 레코드의 **마스킹된 문장**(공개 문장과 같은 140자 상한)만 claude CLI(haiku)에
+ * 보내고 0~10 재미 점수, 한 단어 mood, 배치 안 상위 3건의 pick을 받아 ~/.grumble/judge.json 에 캐시한다.
  *
  * 원칙:
  *  - 외부로 나가는 것은 select와 동일한 mask()를 통과한 문장뿐이다. 원문·경로·세션 id는 보내지 않는다.
@@ -9,13 +9,13 @@
  *  - 실패한 후보는 tries를 세어 MAX_TRIES 회에서 포기한다(무한 재전송 방지).
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { State } from "./types.ts";
 import { mask, MASK_TOKEN_RE, projectNamesFromCwds, defaultNames } from "./mask.ts";
-import { bestSentence, splitSentences, splitTitle } from "./score.ts";
-import { stateDir } from "./util.ts";
-import type { Judgment } from "./select.ts";
+import { displaySentence, splitSentences, splitTitle } from "./score.ts";
+import { saveJsonAtomic, stateDir } from "./util.ts";
+import { truncate, DEFAULT_MAX_CHARS, type Judgment } from "./select.ts";
 
 export const JUDGE_MODEL = "claude-haiku-4-5-20251001";
 /**
@@ -75,11 +75,7 @@ export function loadJudgeCache(path = judgePath()): JudgeCache {
 }
 
 export function saveJudgeCache(cache: JudgeCache, path = judgePath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  // 같은 캐시에 동시에 쓰는 프로세스가 있어도 tmp가 겹치지 않도록 pid+시각을 붙인다.
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(cache), { mode: 0o600 });
-  renameSync(tmp, path);
+  saveJsonAtomic(path, cache);
 }
 
 /** 이 항목이 현재 프롬프트 기준으로 매겨졌는가. 아니면 stale(다른 자로 잰 값)이다. */
@@ -124,9 +120,10 @@ export function candidates(state: State, cache: JudgeCache, limit: number): Cand
     if (settled(cache.items[r.id])) continue;
     // 제목 한 줄뿐인 요약은 속마음이 아니라 진행 표시다.
     if (splitSentences(splitTitle(r.text).body).length === 0) continue;
-    const best = bestSentence(r.text);
+    const best = displaySentence(r);
     if (!best || [...best.text].length < CANDIDATE_MIN_CHARS) continue;
-    const text = mask(best.text, { projectNames, names });
+    // 공개 문장과 같은 상한으로 자른다. 외부로 나가는 분량이 공개되는 분량을 넘지 않는다.
+    const text = truncate(mask(best.text, { projectNames, names }), DEFAULT_MAX_CHARS);
     // 마스킹하고 나면 토큰만 남는 문장은 판정할 내용이 없다(select와 같은 기준).
     const bare = text.replace(MASK_TOKEN_RE, "").replace(/[\s.,!?…"'“”]/g, "");
     if ([...bare].length < 8) continue;
@@ -192,7 +189,7 @@ function stripFences(s: string): string {
  * (indexOf("[")~lastIndexOf("]") 는 배열이 여러 개거나 뒤에 산문이 붙으면 통째로 실패한다.)
  * 파싱은 되지만 객체 배열이 아니면 null.
  */
-export interface JudgeLine { n: number; fun: number; mood?: string; pick?: boolean }
+export interface JudgeLine extends Judgment { n: number }
 
 export function parseJudgeOutput(stdout: string): JudgeLine[] | null {
   let result = stdout;
@@ -324,7 +321,7 @@ export function judge(state: State, opts: JudgeOptions = {}): JudgeResult {
       continue;
     }
     // n 범위 밖·중복은 버리고, 실제로 반영할 것만 모은다.
-    const accepted = new Map<string, { fun: number; mood?: string; pick?: boolean }>();
+    const accepted = new Map<string, Judgment>();
     for (const p of parsed) {
       const c = batch[p.n - 1];
       if (!c) continue;
@@ -344,7 +341,7 @@ export function judge(state: State, opts: JudgeOptions = {}): JudgeResult {
       for (const v of accepted.values()) delete v.pick;
     }
     for (const [id, v] of accepted) {
-      cache.items[id] = { fun: v.fun, ...(v.mood ? { mood: v.mood } : {}), ...(v.pick ? { pick: true } : {}), text: batch.find((c) => c.id === id)!.text, at, pv: PROMPT_VERSION };
+      cache.items[id] = { ...v, text: batch.find((c) => c.id === id)!.text, at, pv: PROMPT_VERSION };
       judged++; dirty = true;
     }
     // 응답이 누락한 후보도 실패로 센다(무한 재전송 방지).

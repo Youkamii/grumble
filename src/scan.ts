@@ -17,18 +17,23 @@ export function emptyState(): State {
   return { version: STATE_VERSION, scannedAt: null, files: {}, records: [] };
 }
 
+/** 커서 키가 Codex 로그인가: 경로 세그먼트가 `.codex`(로컬) 또는 `codex`(원격 사본 remote/<host>/codex). */
+const CODEX_PATH_RE = /[\\/](?:\.codex|codex)[\\/]/;
+
 /**
  * v1 → v2: 정정·자백 채널(#10)은 답변 본문에서 건지므로 이미 끝까지 읽은 Claude 로그를 한 번 더 읽어야 한다.
- * Claude 커서(ctx가 없는 것)만 비운다. Codex 폴더는 수십 GB라 재스캔하지 않는다 — Codex 자백은 앞으로 쌓인다.
+ * Claude 로그 커서만 비운다. Codex 폴더는 수십 GB라 재스캔하지 않는다 — Codex 자백은 앞으로 쌓인다.
+ * 구분은 경로로 한다(ctx 유무로 하면 ctx 도입 전에 기록된 Codex 커서까지 지워 Codex를 재스캔하게 된다).
  * 기존 레코드는 id(source+ts+text 해시)로 중복 제거되므로 재스캔해도 두 번 들어오지 않는다.
  */
-export function migrateState(s: any): State | null {
+export function migrateState(raw: unknown): State | null {
+  const s = raw as { version?: unknown; records?: unknown; files?: Record<string, unknown> } | null;
   if (!s || !Array.isArray(s.records) || !s.files || typeof s.files !== "object") return null;
-  if (s.version === STATE_VERSION) return s as State;
+  if (s.version === STATE_VERSION) return s as unknown as State;
   if (s.version === 1) {
-    for (const [file, cur] of Object.entries<any>(s.files)) if (!cur?.ctx) delete s.files[file];
+    for (const file of Object.keys(s.files)) if (!CODEX_PATH_RE.test(file)) delete s.files[file];
     s.version = STATE_VERSION;
-    return s as State;
+    return s as unknown as State;
   }
   return null;
 }
