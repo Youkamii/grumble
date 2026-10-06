@@ -35,8 +35,9 @@ export interface RenderResult { items: number; files: Record<string, number>; id
 
 export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderResult {
   const state = loadState();
-  // 선별된 문장 뒤에 소스당 통계 말풍선 하나(#12). 노출 기록에는 stats id도 남지만 select는 그 id를 보지 않는다.
-  const items = [...select(state.records, { perSource, judgments: judgmentMap(), exposure: exposureMap() }), ...weeklyStats(state.records)];
+  const selected = select(state.records, { perSource, judgments: judgmentMap(), exposure: exposureMap() });
+  // 선별된 문장 뒤에 소스당 통계 말풍선 하나(#12).
+  const items = [...selected, ...weeklyStats(state.records)];
   const pub = join(repo, "public");
   mkdirSync(pub, { recursive: true });
   const files: Record<string, number> = {};
@@ -52,7 +53,8 @@ export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderR
     renderedAt: new Date().toISOString(),
     items: items.map((s) => ({ source: s.source, ts: s.ts, text: s.text, target: s.target, ...(s.kind ? { kind: s.kind } : {}) })),
   }, null, 2));
-  return { items: items.length, files, ids: items.map((s) => s.id) };
+  // 노출 기록은 선별된 레코드만. 통계 말풍선은 레코드가 아니다.
+  return { items: items.length, files, ids: selected.map((s) => s.id) };
 }
 
 export const PUBLISH_BRANCH = "main";

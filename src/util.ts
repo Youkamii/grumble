@@ -14,6 +14,9 @@ export function saveJsonAtomic(path: string, data: unknown): void {
   renameSync(tmp, path);
 }
 
+/** 재미 판정에 쓰는 모델(judge.ts). 이 모델의 세션은 grumble 자신이 띄운 것이라 수집하지 않는다(sources/claude.ts). */
+export const JUDGE_MODEL = "claude-haiku-4-5-20251001";
+
 export function recordId(source: string, ts: string, text: string): string {
   return createHash("sha1").update(`${source}\n${ts}\n${text}`).digest("hex").slice(0, 16);
 }

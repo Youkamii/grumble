@@ -14,10 +14,10 @@ import { join } from "node:path";
 import type { State } from "./types.ts";
 import { mask, MASK_TOKEN_RE, projectNamesFromCwds, defaultNames } from "./mask.ts";
 import { displaySentence, splitSentences, splitTitle } from "./score.ts";
-import { saveJsonAtomic, stateDir } from "./util.ts";
+import { JUDGE_MODEL, saveJsonAtomic, stateDir } from "./util.ts";
 import { truncate, DEFAULT_MAX_CHARS, type Judgment } from "./select.ts";
 
-export const JUDGE_MODEL = "claude-haiku-4-5-20251001";
+export { JUDGE_MODEL };
 /**
  * 판정 프롬프트의 버전. 채점 기준이 바뀌면 올린다.
  * 다른 버전으로 매긴 점수는 다른 자로 잰 값이라 judgmentMap에서 빠지고(stale) 다시 후보가 된다.

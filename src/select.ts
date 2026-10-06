@@ -49,6 +49,9 @@ export interface Exposure {
   last: string;
 }
 
+/** 말풍선 종류: 레코드 종류(types.ts) + 통계 말풍선(stats.ts). */
+export type BubbleKind = RecordKind | "stats";
+
 export interface Selected {
   id: string;
   source: "codex" | "claude";
@@ -63,8 +66,8 @@ export interface Selected {
   mood?: string;
   /** LLM 판정이 배치 안에서 골라낸 문장. */
   pick?: boolean;
-  /** 레코드 종류(types.ts RecordKind). stats는 레코드가 아니라 stats.ts가 만드는 통계 말풍선. 없으면 추론 요약. */
-  kind?: RecordKind | "stats";
+  /** 말풍선 종류. 없으면 추론 요약. */
+  kind?: BubbleKind;
 }
 
 export interface SelectOptions {

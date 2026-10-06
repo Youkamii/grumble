@@ -3,7 +3,7 @@
  * 대부분의 thinking 블록은 본문 없이 signature만 남는다. 본문이 있는 것(Fable 계열)만 수집.
  */
 import type { GrumbleRecord } from "../types.ts";
-import { recordId } from "../util.ts";
+import { JUDGE_MODEL, recordId } from "../util.ts";
 import { answerRecords } from "./answer.ts";
 
 export const CLAUDE_MARKER = '"thinking":"';
@@ -21,6 +21,8 @@ export function claudeLine(line: string): GrumbleRecord[] {
   const cwd = typeof o.cwd === "string" ? o.cwd : "";
   const session = typeof o.sessionId === "string" ? o.sessionId : "";
   const model = typeof m.model === "string" ? m.model : "";
+  // 재미 판정(claude -p)이 남긴 세션은 grumble 자신이 만든 것이다. 판정 모델이 전역 꿍시렁 규칙을 따라 한 줄을 붙여도 소재가 아니다.
+  if (model === JUDGE_MODEL) return [];
   const out: GrumbleRecord[] = [];
   for (const b of m.content) {
     if (b?.type === "text") {

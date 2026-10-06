@@ -90,8 +90,13 @@ export function scoreSentence(s: string): number {
   return score;
 }
 
-/** 모델이 `꿍시렁:`이라고 명시한 줄의 가산점. 표지어가 없어도 휴리스틱 문턱(3)을 넘는다. */
-export const MUTTER_CUE = 3;
+import type { RecordKind } from "./types.ts";
+
+/**
+ * 모델이 `꿍시렁:`이라고 명시한 줄의 점수 하한. 짧은 줄은 길이 감점(-1/-3)과 어미 감점(-3)으로 표지어가 있어도
+ * 문턱(3) 아래로 떨어지므로, 음수는 0으로 깎고 HEURISTIC_FUN_CAP(5)만큼 얹어 판정 전에도 휴리스틱 최상위와 같은 자리에 선다.
+ */
+export const MUTTER_CUE = 5;
 
 /**
  * 레코드 → 말풍선에 보일 문장.
@@ -100,11 +105,11 @@ export const MUTTER_CUE = 3;
  *    달고 나갈 수 있다. 점수는 두 문장 중 높은 쪽(휴리스틱 경로의 문턱용).
  *  - mutter: 줄을 통째로, MUTTER_CUE를 더해서. 모델이 꿍시렁이라고 표시한 말은 표지어 없이도 후보다.
  */
-export function displaySentence(r: { text: string; kind?: "confession" | "mutter" }): Sentence | null {
+export function displaySentence(r: { text: string; kind?: RecordKind }): Sentence | null {
   if (r.kind === "mutter") {
-    const text = r.text.replace(/\s+/g, " ").trim();
+    const text = r.text.trim();
     if (!text) return null;
-    return { text, score: scoreSentence(text) + MUTTER_CUE, target: classifyTarget(text) };
+    return { text, score: Math.max(scoreSentence(text), 0) + MUTTER_CUE, target: classifyTarget(text) };
   }
   if (r.kind !== "confession") return bestSentence(r.text);
   const sentences = splitSentences(r.text);

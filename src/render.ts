@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FontKit, layout, type Line } from "./font.ts";
-import type { Selected } from "./select.ts";
+import type { BubbleKind, Selected } from "./select.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -62,11 +62,12 @@ export function bubbleShift(lineCount: number): number {
 
 const NAMES: Record<Selected["source"], string> = { claude: "Claude Code", codex: "Codex" };
 
-const VERBS: Record<string, string> = { confession: "correcting…", mutter: "muttering…", stats: "this week…" };
+/** 종류별 동사. BubbleKind에 종류를 더하면 여기도 채워야 컴파일된다. */
+const VERBS: Record<BubbleKind, string> = { confession: "correcting…", mutter: "muttering…", stats: "this week…" };
 
 /** 말풍선 위 작은 라벨. 종류별로 동사가 다르다: thinking…/correcting…/muttering…/this week…. */
 export function labelFor(item: Pick<Selected, "source" | "ts" | "kind">): string {
-  const verb = VERBS[item.kind ?? ""] ?? "thinking…";
+  const verb = item.kind ? VERBS[item.kind] : "thinking…";
   return `${NAMES[item.source]}  ·  ${verb}  ·  ${item.ts.slice(0, 10)}`;
 }
 

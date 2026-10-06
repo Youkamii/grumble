@@ -45,8 +45,8 @@ export function isConfession(s: string): boolean {
   return !(OTHERS_RE.test(s) || REFUSAL_RE.test(s));
 }
 
-/** Codex가 외부 에이전트(Claude Code 등)를 중계할 때 남기는 메시지. 모델의 말이 아니다. */
-const RELAY_RE = /^\s*\[external_agent/;
+/** Codex가 외부 에이전트(Claude Code 등)를 중계할 때 남기는 메시지. 모델의 말이 아니라 도구 출력·파일 내용이다. */
+export const RELAY_RE = /^\s*\[external_agent/;
 
 /**
  * 답변 본문은 마크다운이다. 코드블록은 [code]로, 인용 줄은 삭제, 굵게·글머리표·제목 기호는 걷어낸다(낱말은 그대로).
@@ -65,9 +65,12 @@ export function stripMarkdown(text: string): string {
  * 중계 메시지(본문 첫머리 또는 문단 첫머리가 [external_agent…)·빈 본문은 건너뛴다.
  */
 export function confessionSentences(text: string): string[] {
-  if (!text) return [];
-  const clean = stripMarkdown(text);
-  if (RELAY_RE.test(clean)) return [];
+  return confessionsIn(stripMarkdown(text));
+}
+
+/** stripMarkdown을 이미 거친 본문용(answer.ts). stripMarkdown은 멱등이 아니라 두 번 돌리면 안 된다(글머리표 제거가 겹친다). */
+export function confessionsIn(clean: string): string[] {
+  if (!clean || RELAY_RE.test(clean)) return [];
   const out: string[] = [];
   for (const para of clean.split(/\n+/)) {
     if (RELAY_RE.test(para)) continue;
