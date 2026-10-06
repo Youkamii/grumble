@@ -12,6 +12,8 @@ export interface GrumbleRecord {
   model: string;
   /** 원격 기계에서 가져온 로그면 그 ssh 별칭. 로컬은 undefined. 공개물에는 내보내지 않는다. */
   host?: string;
+  /** 레코드 종류. 없으면 추론 요약(thinking). confession은 답변 본문의 정정·자백 문장(#10). */
+  kind?: "confession";
 }
 
 export interface FileCursor {
@@ -22,7 +24,8 @@ export interface FileCursor {
 }
 
 export interface State {
-  version: 1;
+  /** 2: 정정·자백 채널 도입. 1 → 2 마이그레이션은 Claude 커서를 비워 한 번 재스캔한다(scan.ts). */
+  version: 2;
   scannedAt: string | null;
   files: Record<string, FileCursor>;
   records: GrumbleRecord[];

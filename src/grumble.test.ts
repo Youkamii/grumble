@@ -23,6 +23,9 @@ import {
 } from "./sync.ts";
 import { codexLine } from "./sources/codex.ts";
 import { claudeLine } from "./sources/claude.ts";
+import { confessionSentences, stripMarkdown, CONFESSION_RE } from "./sources/confession.ts";
+import { migrateState, STATE_VERSION } from "./scan.ts";
+import { labelFor } from "./render.ts";
 import type { GrumbleRecord } from "./types.ts";
 
 describe("mask", () => {
@@ -589,10 +592,86 @@ describe("sources", () => {
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ source: "claude", text: "흠, 또 실패네요.", model: "claude-fable-5-1" });
   });
+
+  // --- 정정·자백 채널(#10) ---
+  test("confessionSentences keeps only self-correcting sentences, with the next sentence for context", () => {
+    const text = "구조를 파악했습니다. 제가 잘못 봤네요, 그 함수는 이미 있었습니다. 이제 테스트를 돌리겠습니다.";
+    expect(confessionSentences(text)).toEqual(["제가 잘못 봤네요, 그 함수는 이미 있었습니다. 이제 테스트를 돌리겠습니다."]);
+    // 마지막 문장이 자백이면 그 문장만.
+    expect(confessionSentences("The build passed. I misread the log, the failure was in CI.")).toEqual(["I misread the log, the failure was in CI."]);
+    // 연속된 자백 두 문장은 한 건으로.
+    expect(confessionSentences("제가 틀렸습니다. 정정합니다. 다음으로 넘어갑니다.")).toEqual(["제가 틀렸습니다. 정정합니다."]);
+    // 진행 보고만 있으면 없음. 중계 메시지·빈 본문도 없음.
+    expect(confessionSentences("설정을 확인하겠습니다. 테스트가 실패했습니다.")).toEqual([]);
+    expect(confessionSentences("[external_agent_tool_call: Bash]\ndescription: 제가 잘못 봤네요")).toEqual([]);
+    expect(confessionSentences("")).toEqual([]);
+    // 남 탓은 자백이 아니다.
+    expect(CONFESSION_RE.test("사용자가 잘못 입력했습니다.")).toBe(false);
+    expect(CONFESSION_RE.test("The user was wrong about the path.")).toBe(false);
+    expect(CONFESSION_RE.test("Correction: the port is 8080.")).toBe(true);
+    // '다시 보니'는 관찰이지 자백이 아니다.
+    expect(CONFESSION_RE.test("20초 뒤 다시 보니 태그는 저절로 지워져 있었어요.")).toBe(false);
+  });
+  test("confession text drops markdown bold, bullets and headings but keeps the words", () => {
+    expect(stripMarkdown("**제 실수** 개발이 다른 저장소에서 이뤄졌습니다.")).toBe("제 실수 개발이 다른 저장소에서 이뤄졌습니다.");
+    expect(stripMarkdown("## 결과\n- 첫째\n2. 둘째\n> 인용")).toBe("결과\n첫째\n둘째\n인용");
+    expect(confessionSentences("**인증: 제 말이 틀렸습니다.** 로그인 화면은 그대로 씁니다.")).toEqual(["인증: 제 말이 틀렸습니다. 로그인 화면은 그대로 씁니다."]);
+  });
+  test("claude text blocks yield confession records next to thinking ones", () => {
+    const line = JSON.stringify({ type: "assistant", timestamp: "2026-09-20T00:00:00Z", cwd: "C:\\q", sessionId: "s", message: { model: "claude-fable-5-1", content: [
+      { type: "thinking", thinking: "흠, 또 실패네요." },
+      { type: "text", text: "확인했습니다. 제 실수였습니다, 경로를 거꾸로 적었네요. 고치겠습니다." },
+      { type: "text", text: "이제 빌드를 돌리겠습니다." },
+    ] } });
+    const out = claudeLine(line);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ source: "claude", text: "흠, 또 실패네요." });
+    expect(out[0]!.kind).toBeUndefined();
+    expect(out[1]).toMatchObject({ source: "claude", kind: "confession", text: "제 실수였습니다, 경로를 거꾸로 적었네요. 고치겠습니다.", cwd: "C:\\q" });
+    expect(out[0]!.id).not.toBe(out[1]!.id);
+    // text 블록만 있고 자백이 없으면 아무것도 없다.
+    const plain = JSON.stringify({ type: "assistant", timestamp: "t", message: { content: [{ type: "text", text: "빌드를 돌리겠습니다." }] } });
+    expect(claudeLine(plain)).toEqual([]);
+  });
+  test("codex assistant output_text yields confession records; relay messages and agent_message copies do not", () => {
+    const ctx = { cwd: "C:\\p", session: "sess1", model: "gpt-x" };
+    const msg = (text: string) => JSON.stringify({ timestamp: "2026-10-01T00:00:00Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] } });
+    const out = codexLine(msg("Done. My mistake, the flag is --force, not -f. Re-running now."), ctx);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ source: "codex", kind: "confession", text: "My mistake, the flag is --force, not -f. Re-running now.", cwd: "C:\\p", session: "sess1", model: "gpt-x" });
+    expect(codexLine(msg("[external_agent_tool_result]\nMy mistake, the flag is --force."), ctx)).toEqual([]);
+    expect(codexLine(msg("All tests pass."), ctx)).toEqual([]);
+    // user 메시지와 event_msg 복사본은 보지 않는다.
+    expect(codexLine(JSON.stringify({ timestamp: "t", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "My mistake, retry." }] } }), ctx)).toEqual([]);
+    expect(codexLine(JSON.stringify({ timestamp: "t", type: "event_msg", payload: { type: "agent_message", message: "My mistake, retry." } }), ctx)).toEqual([]);
+  });
+  test("state v1 migrates to v2 by dropping claude cursors only", () => {
+    const v1 = { version: 1, scannedAt: null, records: [], files: {
+      "C:\\c\\a.jsonl": { size: 1, offset: 1, mtimeMs: 1 },
+      "C:\\x\\rollout.jsonl": { size: 2, offset: 2, mtimeMs: 2, ctx: { cwd: "", session: "", model: "" } },
+    } };
+    const m = migrateState(v1)!;
+    expect(m.version).toBe(STATE_VERSION);
+    expect(Object.keys(m.files)).toEqual(["C:\\x\\rollout.jsonl"]);
+    // v2는 그대로, 깨진 것은 null.
+    expect(migrateState({ version: 2, scannedAt: null, records: [], files: {} })!.version).toBe(2);
+    expect(migrateState({ version: 3, records: [], files: {} })).toBeNull();
+    expect(migrateState({ version: 1 })).toBeNull();
+  });
+  test("the bubble label says correcting… for a confession", () => {
+    expect(labelFor({ source: "claude", ts: "2026-09-20T01:02:03Z" })).toBe("Claude Code  ·  thinking…  ·  2026-09-20");
+    expect(labelFor({ source: "codex", ts: "2026-09-20T01:02:03Z", kind: "confession" })).toBe("Codex  ·  correcting…  ·  2026-09-20");
+  });
+  test("confession records carry kind through select", () => {
+    const r: GrumbleRecord = { id: "c1", source: "claude", ts: "2026-09-17T00:00:00Z", text: "제가 잘못 봤네요, 그 함수는 이미 있었습니다.", cwd: "", session: "s", model: "m", kind: "confession" };
+    const out = select([r], { perSource: 1, now: new Date("2026-09-18T00:00:00Z") });
+    expect(out[0]).toMatchObject({ id: "c1", kind: "confession" });
+    expect(bestSentence(r.text)!.target).toBe("self");
+  });
 });
 
 describe("judge", () => {
-  const state = (recs: GrumbleRecord[]): State => ({ version: 1, scannedAt: null, files: {}, records: recs });
+  const state = (recs: GrumbleRecord[]): State => ({ version: 2, scannedAt: null, files: {}, records: recs });
   const rec = (i: number, text: string, ts: string): GrumbleRecord => ({
     id: `j${i}`, source: "codex", ts, text, cwd: "C:\\Users\\me\\Git\\myproj", session: "s", model: "m",
   });
@@ -900,7 +979,7 @@ describe("scan extraRoots", () => {
     writeFileSync(join(localRoot, "a.jsonl"), line("흠, 로컬 빌드가 또 깨졌네요.", "2026-09-20T00:00:00Z"));
     writeFileSync(join(remoteRoot, "b.jsonl"), line("흠, 원격 빌드가 또 깨졌네요.", "2026-09-21T00:00:00Z"));
 
-    const state: State = { version: 1, scannedAt: null, files: {}, records: [] };
+    const state: State = { version: 2, scannedAt: null, files: {}, records: [] };
     const s = await scan(state, {
       claudeRoot: localRoot,
       codexRoot: join(dir, "no-such-codex"),

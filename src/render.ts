@@ -62,6 +62,12 @@ export function bubbleShift(lineCount: number): number {
 
 const NAMES: Record<Selected["source"], string> = { claude: "Claude Code", codex: "Codex" };
 
+/** 말풍선 위 작은 라벨. 자백은 'thinking…' 대신 'correcting…'. */
+export function labelFor(item: Pick<Selected, "source" | "ts" | "kind">): string {
+  const verb = item.kind === "confession" ? "correcting…" : "thinking…";
+  return `${NAMES[item.source]}  ·  ${verb}  ·  ${item.ts.slice(0, 10)}`;
+}
+
 function iconPath(name: "claudecode" | "openai"): string {
   const svg = readFileSync(join(HERE, "..", "assets", "icons", `${name}.svg`), "utf8");
   const m = svg.match(/<path d="([^"]+)"/);
@@ -156,9 +162,7 @@ export function renderSvg(items: Selected[], themeName: "dark" | "light", kit = 
     const y0 = lineY(0);
     cursorX.unshift([start, TEXT_X]); cursorY.unshift([start, y0 - TEXT_SIZE + 1]);
 
-    const date = item.ts.slice(0, 10);
-    const label = `${NAMES[item.source]}  ·  thinking…  ·  ${date}`;
-    const labelLines = layout(kit, label, LABEL_SIZE, TEXT_W, 1);
+    const labelLines = layout(kit, labelFor(item), LABEL_SIZE, TEXT_W, 1);
     const labelUses = labelLines[0]!.chars.filter((c) => c.glyph.d).map((c) => use(c.glyph.id, TEXT_X + c.x, LABEL_Y)).join("");
 
     const vis = discrete("opacity", [[0, 0], [start, 1], [end + Math.min(GAP_MS / 2, 200), 0]], loopMs);

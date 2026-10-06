@@ -48,7 +48,7 @@ export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderR
   // 공개 메타: 마스킹된 문장과 시각만. 원문·경로·세션 id는 넣지 않는다.
   writeFileSync(join(pub, "grumble.json"), JSON.stringify({
     renderedAt: new Date().toISOString(),
-    items: items.map((s) => ({ source: s.source, ts: s.ts, text: s.text, target: s.target })),
+    items: items.map((s) => ({ source: s.source, ts: s.ts, text: s.text, target: s.target, ...(s.kind ? { kind: s.kind } : {}) })),
   }, null, 2));
   return { items: items.length, files, ids: items.map((s) => s.id) };
 }

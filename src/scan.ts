@@ -11,15 +11,33 @@ import { codexSessionsDir, claudeProjectsDir, stateDir, statePath } from "./util
 
 export const MAX_RECORDS = 5000;
 
+export const STATE_VERSION = 2;
+
 export function emptyState(): State {
-  return { version: 1, scannedAt: null, files: {}, records: [] };
+  return { version: STATE_VERSION, scannedAt: null, files: {}, records: [] };
+}
+
+/**
+ * v1 → v2: 정정·자백 채널(#10)은 답변 본문에서 건지므로 이미 끝까지 읽은 Claude 로그를 한 번 더 읽어야 한다.
+ * Claude 커서(ctx가 없는 것)만 비운다. Codex 폴더는 수십 GB라 재스캔하지 않는다 — Codex 자백은 앞으로 쌓인다.
+ * 기존 레코드는 id(source+ts+text 해시)로 중복 제거되므로 재스캔해도 두 번 들어오지 않는다.
+ */
+export function migrateState(s: any): State | null {
+  if (!s || !Array.isArray(s.records) || !s.files || typeof s.files !== "object") return null;
+  if (s.version === STATE_VERSION) return s as State;
+  if (s.version === 1) {
+    for (const [file, cur] of Object.entries<any>(s.files)) if (!cur?.ctx) delete s.files[file];
+    s.version = STATE_VERSION;
+    return s as State;
+  }
+  return null;
 }
 
 export function loadState(path = statePath()): State {
   if (!existsSync(path)) return emptyState();
   try {
-    const s = JSON.parse(readFileSync(path, "utf8"));
-    if (s?.version === 1 && Array.isArray(s.records) && s.files) return s as State;
+    const m = migrateState(JSON.parse(readFileSync(path, "utf8")));
+    if (m) return m;
   } catch { /* corrupted → fresh */ }
   return emptyState();
 }

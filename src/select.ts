@@ -61,6 +61,8 @@ export interface Selected {
   mood?: string;
   /** LLM 판정이 배치 안에서 골라낸 문장. */
   pick?: boolean;
+  /** confession이면 답변 본문의 정정·자백 문장. 없으면 추론 요약. */
+  kind?: "confession";
 }
 
 export interface SelectOptions {
@@ -221,6 +223,7 @@ export function select(records: GrumbleRecord[], opts: SelectOptions = {}): Sele
         score: c.best.score, target: c.best.target, fun: c.fun,
         ...(c.j?.mood ? { mood: c.j.mood } : {}),
         ...(c.j?.pick ? { pick: true } : {}),
+        ...(c.r.kind ? { kind: c.r.kind } : {}),
       });
     }
     if (bySource.codex!.length >= perSource && bySource.claude!.length >= perSource) break;

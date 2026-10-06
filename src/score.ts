@@ -28,7 +28,7 @@ export function splitSentences(body: string): string[] {
   return (norm.match(re) ?? []).map((s) => s.trim()).filter(Boolean);
 }
 
-const SELF_RE = /\b(I (misread|missed|forgot|assumed|overlooked|misjudged)|my (mistake|bad|assumption))\b|착각|오판|내가 잘못|잘못 (봤|읽|판단)|놓쳤|빠뜨|실수/i;
+const SELF_RE = /\b(I (misread|missed|forgot|assumed|overlooked|misjudged|misunderstood|was wrong|stand corrected|apologi[sz]e)|my (mistake|bad|assumption))\b|착각|오판|오해|내가 잘못|제가 (잘못|틀렸)|잘못 (봤|읽|판단|짚|알|적|이해)|틀렸|정정|죄송|놓쳤|빠뜨|실수/i;
 const USER_RE = /\b(the user|user'?s|they (want|asked|said|insist))\b|사용자|유저|요구|요청|지시/i;
 
 const CUES: Array<[RegExp, number]> = [
