@@ -2,7 +2,11 @@ import { describe, expect, spyOn, test } from "bun:test";
 import * as masking from "./mask.ts";
 import { mask, projectNamesFromCwds } from "./mask.ts";
 import { splitTitle, splitSentences, scoreSentence, bestSentence, classifyTarget } from "./score.ts";
-import { select, truncate, recencyBonus, parsePerSource, DEFAULT_PER_SOURCE, HEURISTIC_FUN_CAP, type Selected } from "./select.ts";
+import {
+  select, truncate, recencyBonus, parsePerSource, exposureState,
+  DEFAULT_PER_SOURCE, HEURISTIC_FUN_CAP, STICKY_HOURS, COOLDOWN_DAYS, WINDOW_DAYS, type Selected, type Exposure,
+} from "./select.ts";
+import { emptyExposure, exposureMap, loadExposure, recordExposure, saveExposure, PRUNE_DAYS } from "./exposure.ts";
 import {
   buildPrompt, candidates, emptyCache, judge, judgmentMap, loadJudgeCache, parseJudgeOutput,
   suspiciousBatch, MAX_TRIES, PROMPT_VERSION, type JudgeCache,
@@ -299,6 +303,72 @@ describe("select", () => {
     const out = select([mk("old", 80), mk("new", 1)], { perSource: 2, now });
     expect(out.map((o) => o.id)).toEqual(["new", "old"]);
   });
+  // --- 신선도(#8): sticky / cooldown / window / mood ---
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+  const expo = (id: string, hoursSinceLast: number): [string, Exposure] => [id, { first: hoursAgo(hoursSinceLast + 1), last: hoursAgo(hoursSinceLast) }];
+  test("exposureState: sticky within a day, cooling for two weeks, then none", () => {
+    expect(exposureState(undefined, NOW)).toBe("none");
+    expect(exposureState({ first: "x", last: "not-a-date" }, NOW)).toBe("none");
+    expect(exposureState(expo("a", 1)[1], NOW)).toBe("sticky");
+    expect(exposureState(expo("a", STICKY_HOURS - 0.01)[1], NOW)).toBe("sticky");
+    expect(exposureState(expo("a", STICKY_HOURS)[1], NOW)).toBe("cooling");
+    expect(exposureState(expo("a", COOLDOWN_DAYS * 24 - 1)[1], NOW)).toBe("cooling");
+    expect(exposureState(expo("a", COOLDOWN_DAYS * 24)[1], NOW)).toBe("none");
+  });
+  test("a sentence shown within the last day keeps its slot even against a better newcomer", () => {
+    const recs = [
+      rec(1, "codex", "The deploy step finished without incident."),
+      rec(2, "codex", "The build finished, nothing to see here."),
+    ];
+    const judgments = new Map([["id1", { fun: 5, mood: "deadpan" }], ["id2", { fun: 9, mood: "smug" }]]);
+    // 노출 기록이 없으면 9점이 먼저.
+    expect(select(recs, { perSource: 1, judgments, now: NOW }).map((o) => o.id)).toEqual(["id2"]);
+    // id1이 3시간 전에 실렸으면 자리를 지킨다.
+    const exposure = new Map([expo("id1", 3)]);
+    expect(select(recs, { perSource: 1, judgments, exposure, now: NOW }).map((o) => o.id)).toEqual(["id1"]);
+  });
+  test("a sentence shown days ago rests: a lower one takes the slot, and it only returns when nothing else is left", () => {
+    const recs = [
+      rec(1, "codex", "The deploy step finished without incident."),
+      rec(2, "codex", "The build finished, nothing to see here."),
+    ];
+    const judgments = new Map([["id1", { fun: 9, mood: "smug" }], ["id2", { fun: 4, mood: "deadpan" }]]);
+    const exposure = new Map([expo("id1", 3 * 24)]);
+    expect(select(recs, { perSource: 1, judgments, exposure, now: NOW }).map((o) => o.id)).toEqual(["id2"]);
+    // 슬롯이 둘이면 쿨다운 중인 문장도 마지막 단계에서 돌아온다(빈 말풍선보다 낫다).
+    expect(select(recs, { perSource: 2, judgments, exposure, now: NOW }).map((o) => o.id)).toEqual(["id2", "id1"]);
+    // 쿨다운이 끝나면 다시 점수순.
+    const rested = new Map([expo("id1", (COOLDOWN_DAYS + 1) * 24)]);
+    expect(select(recs, { perSource: 1, judgments, exposure: rested, now: NOW }).map((o) => o.id)).toEqual(["id1"]);
+  });
+  test("the recent window is filled first: a fresh 5 beats a two-month-old 8", () => {
+    const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+    const mk = (id: string, days: number): GrumbleRecord => ({ id, source: "codex", ts: daysAgo(days), text: `The ${id} step finished without incident.`, cwd: "", session: "s", model: "m" });
+    const recs = [mk("old", 60), mk("fresh", 2)];
+    const judgments = new Map([["old", { fun: 8, mood: "smug" }], ["fresh", { fun: 5, mood: "deadpan" }]]);
+    expect(WINDOW_DAYS).toBe(14);
+    expect(select(recs, { perSource: 1, judgments, now: NOW }).map((o) => o.id)).toEqual(["fresh"]);
+    // 창 안에 문턱을 넘는 것이 없으면 창을 풀고 옛 문장을 쓴다.
+    const dull = new Map([["old", { fun: 8, mood: "smug" }], ["fresh", { fun: 1, mood: "neutral" }]]);
+    expect(select(recs, { perSource: 1, judgments: dull, now: NOW }).map((o) => o.id)).toEqual(["old"]);
+    // 두 슬롯이면 창 안 문장 다음에 옛 문장.
+    expect(select(recs, { perSource: 2, judgments, now: NOW }).map((o) => o.id)).toEqual(["fresh", "old"]);
+  });
+  test("the same mood does not run back to back while there is an alternative", () => {
+    const recs = [
+      rec(1, "codex", "The deploy step finished without incident."),
+      rec(2, "codex", "The build finished, nothing to see here."),
+      rec(3, "codex", "The lint run came back clean."),
+    ];
+    const judgments = new Map([
+      ["id1", { fun: 9, mood: "sarcastic" }], ["id2", { fun: 8, mood: "sarcastic" }], ["id3", { fun: 5, mood: "deadpan" }],
+    ]);
+    const out = select(recs, { perSource: 3, judgments, now: NOW });
+    expect(out.map((o) => o.id)).toEqual(["id1", "id3", "id2"]);
+    // 대안이 없으면(슬롯 2, sarcastic 둘뿐) 같은 mood가 이어져도 채운다.
+    const two = new Map([["id1", { fun: 9, mood: "sarcastic" }], ["id2", { fun: 8, mood: "sarcastic" }]]);
+    expect(select(recs.slice(0, 2), { perSource: 2, judgments: two, now: NOW }).map((o) => o.id)).toEqual(["id1", "id2"]);
+  });
   test("parsePerSource falls back to the default for a non-numeric arg", () => {
     expect(HEURISTIC_FUN_CAP).toBe(5);
     expect(parsePerSource("5")).toBe(5);
@@ -309,6 +379,31 @@ describe("select", () => {
   test("truncate", () => {
     expect(truncate("abcdef", 6)).toBe("abcdef");
     expect(truncate("abcdefg", 6)).toBe("abcde…");
+  });
+});
+
+describe("exposure", () => {
+  const NOW = new Date("2026-09-18T00:00:00Z");
+  const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
+  test("recordExposure keeps first, bumps last, prunes stale entries", () => {
+    const cache = emptyExposure();
+    cache.items["old"] = { first: daysAgo(PRUNE_DAYS + 5), last: daysAgo(PRUNE_DAYS + 1) };
+    cache.items["kept"] = { first: daysAgo(10), last: daysAgo(10) };
+    cache.items["bad"] = { first: "x", last: "not-a-date" };
+    recordExposure(cache, ["kept", "new"], NOW);
+    expect(Object.keys(cache.items).sort()).toEqual(["kept", "new"]);
+    expect(cache.items["kept"]).toEqual({ first: daysAgo(10), last: NOW.toISOString() });
+    expect(cache.items["new"]).toEqual({ first: NOW.toISOString(), last: NOW.toISOString() });
+    expect(PRUNE_DAYS).toBe(COOLDOWN_DAYS * 2);
+  });
+  test("save/load round-trips and a corrupted file falls back to empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "grumble-expo-"));
+    const path = join(dir, "exposure.json");
+    saveExposure(recordExposure(emptyExposure(), ["a"], NOW), path);
+    expect(exposureMap(loadExposure(path)).get("a")?.last).toBe(NOW.toISOString());
+    writeFileSync(path, "{not json");
+    expect(loadExposure(path)).toEqual(emptyExposure());
+    expect(loadExposure(join(dir, "missing.json"))).toEqual(emptyExposure());
   });
 });
 

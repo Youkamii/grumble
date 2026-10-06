@@ -12,6 +12,7 @@ import { renderSvg } from "./render.ts";
 import { FontKit } from "./font.ts";
 import { stateDir } from "./util.ts";
 import { judge, judgmentMap } from "./judge.ts";
+import { exposureMap, loadExposure, recordExposure, saveExposure } from "./exposure.ts";
 import { remoteRoots, sync } from "./sync.ts";
 
 export const TASK_NAME = "grumble-publish";
@@ -29,11 +30,11 @@ function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-export interface RenderResult { items: number; files: Record<string, number> }
+export interface RenderResult { items: number; files: Record<string, number>; ids: string[] }
 
 export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderResult {
   const state = loadState();
-  const items = select(state.records, { perSource, judgments: judgmentMap() });
+  const items = select(state.records, { perSource, judgments: judgmentMap(), exposure: exposureMap() });
   const pub = join(repo, "public");
   mkdirSync(pub, { recursive: true });
   const files: Record<string, number> = {};
@@ -49,7 +50,7 @@ export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderR
     renderedAt: new Date().toISOString(),
     items: items.map((s) => ({ source: s.source, ts: s.ts, text: s.text, target: s.target })),
   }, null, 2));
-  return { items: items.length, files };
+  return { items: items.length, files, ids: items.map((s) => s.id) };
 }
 
 export const PUBLISH_BRANCH = "main";
@@ -99,6 +100,12 @@ export async function publish(repo: string, opts: { push?: boolean; judge?: bool
     const date = new Date().toISOString().slice(0, 16).replace("T", " ");
     git(["commit", "-q", "-m", `grumble: update ${date} (${r.items} items)`, "--", "public"], repo);
     log("committed");
+    // 실제로 실린 문장만 노출로 센다. 기록 실패는 발행을 막지 않는다(다음 발행에서 같은 문장이 한 번 더 실릴 뿐).
+    try {
+      saveExposure(recordExposure(loadExposure(), r.ids, new Date()));
+    } catch (e) {
+      log(`exposure: save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   if (opts.push === false) return { changed, pushed: false, items: r.items };
 

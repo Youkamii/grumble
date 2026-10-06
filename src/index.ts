@@ -25,13 +25,19 @@ async function main(): Promise<void> {
     // 실데이터로 선별 결과를 눈으로 확인하는 용도. 공개물과 같은 마스킹을 거친다.
     const { select, parsePerSource } = await import("./select.ts");
     const { judgmentMap } = await import("./judge.ts");
+    const { exposureMap } = await import("./exposure.ts");
+    const { exposureState } = await import("./select.ts");
     const state = loadState();
     const arg = process.argv.slice(3).find((a) => !a.startsWith("--"));
     const n = parsePerSource(arg);
     const judgments = process.argv.includes("--no-judge") ? undefined : judgmentMap();
-    for (const s of select(state.records, { perSource: n, judgments })) {
+    // --no-exposure 면 노출 기록을 무시한다(쿨다운 없이 순수 점수순을 보고 싶을 때).
+    const exposure = process.argv.includes("--no-exposure") ? undefined : exposureMap();
+    const now = new Date();
+    for (const s of select(state.records, { perSource: n, judgments, exposure, now })) {
       const fun = `fun=${s.fun.toFixed(1)}${s.mood ? `/${s.mood}` : ""}`;
-      console.log(`[${s.source}] ${s.ts.slice(0, 16)} (${fun} h=${s.score}/${s.target}) ${s.text}`);
+      const exp = exposureState(exposure?.get(s.id), now);
+      console.log(`[${s.source}] ${s.ts.slice(0, 16)} (${fun} h=${s.score}/${s.target}${exp === "none" ? "" : ` ${exp}`}) ${s.text}`);
     }
     return;
   }
@@ -71,7 +77,7 @@ async function main(): Promise<void> {
     console.log((await import("./publish.ts")).unregister());
     return;
   }
-  console.log("usage: grumble <sync [--full]|scan|judge [limit]|preview [n] [--no-judge]|render|publish [--no-push] [--no-judge] [--no-sync]|register|unregister>");
+  console.log("usage: grumble <sync [--full]|scan|judge [limit]|preview [n] [--no-judge] [--no-exposure]|render|publish [--no-push] [--no-judge] [--no-sync]|register|unregister>");
 }
 
 main().catch((e) => {
