@@ -13,6 +13,7 @@ import { FontKit } from "./font.ts";
 import { stateDir } from "./util.ts";
 import { judge, judgmentMap } from "./judge.ts";
 import { exposureMap, loadExposure, recordExposure, saveExposure } from "./exposure.ts";
+import { weeklyStats } from "./stats.ts";
 import { remoteRoots, sync } from "./sync.ts";
 
 export const TASK_NAME = "grumble-publish";
@@ -34,7 +35,8 @@ export interface RenderResult { items: number; files: Record<string, number>; id
 
 export function renderAll(repo: string, perSource = DEFAULT_PER_SOURCE): RenderResult {
   const state = loadState();
-  const items = select(state.records, { perSource, judgments: judgmentMap(), exposure: exposureMap() });
+  // 선별된 문장 뒤에 소스당 통계 말풍선 하나(#12). 노출 기록에는 stats id도 남지만 select는 그 id를 보지 않는다.
+  const items = [...select(state.records, { perSource, judgments: judgmentMap(), exposure: exposureMap() }), ...weeklyStats(state.records)];
   const pub = join(repo, "public");
   mkdirSync(pub, { recursive: true });
   const files: Record<string, number> = {};

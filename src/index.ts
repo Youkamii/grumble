@@ -33,7 +33,8 @@ async function main(): Promise<void> {
     // --no-exposure 면 노출 기록을 무시한다(쿨다운 없이 순수 점수순을 보고 싶을 때).
     const exposure = process.argv.includes("--no-exposure") ? undefined : exposureMap();
     const now = new Date();
-    for (const s of select(state.records, { perSource: n, judgments, exposure, now })) {
+    const { weeklyStats } = await import("./stats.ts");
+    for (const s of [...select(state.records, { perSource: n, judgments, exposure, now }), ...weeklyStats(state.records, now)]) {
       const fun = `fun=${s.fun.toFixed(1)}${s.mood ? `/${s.mood}` : ""}${s.pick ? "★" : ""}`;
       const exp = exposureState(exposure?.get(s.id), now);
       console.log(`[${s.source}${s.kind ? `:${s.kind}` : ""}] ${s.ts.slice(0, 16)} (${fun} h=${s.score}/${s.target}${exp === "none" ? "" : ` ${exp}`}) ${s.text}`);

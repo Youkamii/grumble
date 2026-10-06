@@ -26,6 +26,7 @@ import { claudeLine } from "./sources/claude.ts";
 import { confessionSentences, isConfession, stripMarkdown, CONFESSION_RE } from "./sources/confession.ts";
 import { answerRecords, mutterLines } from "./sources/answer.ts";
 import { displaySentence, MUTTER_CUE, scoreSentence } from "./score.ts";
+import { countStats, statsText, weeklyStats, windowOf, STATS_DAYS } from "./stats.ts";
 import { migrateState, STATE_VERSION } from "./scan.ts";
 import { labelFor } from "./render.ts";
 import type { GrumbleRecord } from "./types.ts";
@@ -451,6 +452,53 @@ describe("exposure", () => {
     writeFileSync(path, "{not json");
     expect(loadExposure(path)).toEqual(emptyExposure());
     expect(loadExposure(join(dir, "missing.json"))).toEqual(emptyExposure());
+  });
+});
+
+describe("stats", () => {
+  // 로컬 시각으로 만든다 — 새벽 판정이 머신 시간대와 무관하게 성립하도록.
+  const NOW = new Date(2026, 9, 6, 11, 30); // 2026-10-06 11:30 로컬
+  const at = (d: number, h: number) => new Date(2026, 9, d, h, 0).toISOString();
+  const rec = (i: number, source: "codex" | "claude", ts: string, text: string, kind?: "confession" | "mutter"): GrumbleRecord =>
+    ({ id: `s${i}`, source, ts, text, cwd: "", session: "s", model: "m", ...(kind ? { kind } : {}) });
+  test("windowOf covers the seven full local days before today", () => {
+    const { start, end } = windowOf(NOW);
+    expect(end.getTime()).toBe(new Date(2026, 9, 6).getTime());
+    expect(start.getTime()).toBe(new Date(2026, 8, 29).getTime());
+    expect(STATS_DAYS).toBe(7);
+  });
+  test("countStats counts plans, confessions, mutters and late-night records per source inside the window", () => {
+    const recs = [
+      rec(1, "claude", at(5, 14), "구조를 파악했습니다. 이제 렌더러를 작성하겠습니다."),
+      rec(2, "claude", at(3, 3), "Next I'll run the tests."),            // 새벽 + 계획
+      rec(3, "claude", at(2, 23), "제 실수였습니다. 고쳤습니다.", "confession"),
+      rec(4, "claude", at(1, 2), "오늘도 윈도우가 이겼다.", "mutter"),   // 새벽 + 꿍시렁
+      rec(5, "codex", at(4, 10), "Weirdly the command hangs."),
+      rec(6, "claude", at(6, 1), "오늘 것은 창 밖(오늘 0시 이후)."),       // 창 밖
+      rec(7, "claude", new Date(2026, 8, 28, 23, 0).toISOString(), "하겠습니다."), // 창 밖(8일 전)
+      rec(8, "claude", "not-a-date", "하겠습니다."),
+    ];
+    const [claude, codex] = countStats(recs, NOW);
+    expect(claude).toEqual({ source: "claude", records: 4, plans: 2, confessions: 1, mutters: 1, lateNight: 2 });
+    expect(codex).toEqual({ source: "codex", records: 1, plans: 0, confessions: 0, mutters: 0, lateNight: 0 });
+    expect(statsText(claude!)).toBe('지난 7일 성적표: "하겠습니다" 2번, "제 잘못" 1번, 꿍시렁 1번, 새벽 작업 2건.');
+    // 셀 게 없으면 말풍선이 없다.
+    expect(statsText(codex!)).toBeNull();
+    expect(statsText({ source: "codex", records: 0, plans: 0, confessions: 0, mutters: 0, lateNight: 0 })).toBeNull();
+  });
+  test("weeklyStats makes one stats bubble per source that has something to say, dated today", () => {
+    const recs = [
+      rec(1, "claude", at(5, 14), "렌더러를 작성하겠습니다."),
+      rec(2, "codex", at(4, 10), "Weirdly the command hangs."),
+    ];
+    const out = weeklyStats(recs, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: "stats:claude:2026-10-06", source: "claude", ts: "2026-10-06T00:00:00", kind: "stats", fun: 0, target: "self" });
+    expect(out[0]!.text).toBe('지난 7일 성적표: "하겠습니다" 1번.');
+    expect(labelFor(out[0]!)).toBe("Claude Code  ·  this week…  ·  2026-10-06");
+    // 같은 날이면 id·텍스트가 같아 SVG가 바뀌지 않는다(발행 churn 방지).
+    expect(weeklyStats(recs, new Date(2026, 9, 6, 23, 59))).toEqual(out);
+    expect(weeklyStats([], NOW)).toEqual([]);
   });
 });
 

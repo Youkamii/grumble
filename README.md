@@ -19,7 +19,7 @@ grumble은 그 로그를 훑어 가장 "꿍시렁"다운 문장을 뽑고(답변
 | `bun run scan` | `~/.codex/sessions`, `~/.claude/projects`, 그리고 받아둔 원격 사본을 증분 스캔 → `~/.grumble/state.json` (원문은 로컬에만). 추론 요약과 답변 본문의 정정·자백 문장을 모은다 |
 | `bun run judge [n]` | 아직 판정 안 된 후보를 claude CLI(haiku)에 보내 재미 점수를 매기고 `~/.grumble/judge.json`에 캐시 (기본 상한 200건) |
 | `bun run preview` | 선별·마스킹 결과를 터미널에서 확인 (`--no-judge`면 판정 캐시 무시, `--no-exposure`면 노출 기록 무시) |
-| `bun run render` | `public/grumble-{dark,light}.svg` 생성 (소스별 최근 3문장) |
+| `bun run render` | `public/grumble-{dark,light}.svg` 생성 (소스별 최근 3문장 + 소스별 통계 말풍선 1개) |
 | `bun run publish` | sync → scan → judge → render → SVG가 바뀌면 commit, 미푸시 커밋이 있으면 push |
 | `bun run publish --no-push` | 위와 같되 push는 생략 |
 | `bun run publish --no-judge` | LLM 판정 호출을 건너뛰고 기존 `judge.json` 캐시만 써서 render → commit/push |
@@ -122,6 +122,21 @@ bun run unregister             # 자동 발행 해제
 grumble은 답변 본문에서 그 줄만 건져 `kind: "mutter"`로 모은다(`src/sources/answer.ts`). 모델이 실제로 한 말이라
 "what the model muttered"가 그대로 성립하고, 꿍시렁 줄은 자백 추출 대상에서 빠져 두 채널에 겹치지 않는다.
 규칙은 2026-10-06부터라 그 전 로그에는 없다.
+
+## 숫자 말풍선 — 지난 7일 성적표
+
+선별된 문장 뒤에 소스당 통계 말풍선이 하나씩 붙는다(라벨 `this week…`). 예: `지난 7일 성적표: "하겠습니다" 208번,
+"제 잘못" 14번, 꿍시렁 3번, 새벽 작업 9건.` 전부 로컬 state에서 센 사실이고 LLM을 쓰지 않는다(`src/stats.ts`).
+
+| 항목 | 기준 |
+|---|---|
+| 창 | 오늘 0시(로컬) 이전 7일. 하루 단위로만 움직여 SVG가 하루 한 번만 바뀐다 |
+| "하겠습니다" | 추론 요약 중 `겠습니다/겠다/할게요/I'll/I will/Let me`가 든 것 |
+| "제 잘못" | `kind: confession` 레코드 수 |
+| 꿍시렁 | `kind: mutter` 레코드 수 |
+| 새벽 작업 | 로컬 0~5시 레코드 수 |
+
+0인 항목은 빼고, 셀 게 없는 소스는 말풍선을 만들지 않는다. `public/grumble.json`에는 `kind: "stats"`로 실린다.
 
 ## 원격 기계 (sync)
 
