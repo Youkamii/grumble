@@ -16,6 +16,7 @@ import { mask, MASK_TOKEN_RE, projectNamesFromCwds, defaultNames } from "./mask.
 import { displaySentence, splitSentences, splitTitle } from "./score.ts";
 import { JUDGE_MODEL, saveJsonAtomic, stateDir } from "./util.ts";
 import { truncate, DEFAULT_MAX_CHARS, type Judgment } from "./select.ts";
+import { configNames } from "./sync.ts";
 
 export { JUDGE_MODEL };
 /**
@@ -112,7 +113,8 @@ function settled(it: JudgeItem | undefined): boolean {
  */
 export function candidates(state: State, cache: JudgeCache, limit: number): Candidate[] {
   const projectNames = projectNamesFromCwds(state.records.map((r) => r.cwd));
-  const names = defaultNames();
+  // select와 같은 이름 목록이어야 한다. 원격 계정명·host 별칭(configNames)을 빼먹으면 그 이름이 가려지지 않은 채 Haiku로 나간다.
+  const names = new Set([...defaultNames(), ...configNames()]);
   const out: Candidate[] = [];
   const recent = [...state.records].sort((a, b) => b.ts.localeCompare(a.ts));
   for (const r of recent) {

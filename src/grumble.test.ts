@@ -18,6 +18,7 @@ import type { State } from "./types.ts";
 import { FontKit } from "./font.ts";
 import { buildTimeline, bubbleHeight, bubbleShift, bubbleTop, renderSvg, THEMES } from "./render.ts";
 import { scan } from "./scan.ts";
+import * as syncmod from "./sync.ts";
 import {
   configNames, loadConfig, loadSyncState, remoteTarCommand, shq, splitRemotePath, sync, type SyncState,
 } from "./sync.ts";
@@ -886,6 +887,16 @@ describe("judge", () => {
     const t = candidates(long, emptyCache(), 10)[0]!.text;
     expect([...t].length).toBeLessThanOrEqual(140);
     expect(t.endsWith("…")).toBe(true);
+  });
+
+  test("candidates masks remote account and host names the same way select does", () => {
+    const spy = spyOn(syncmod, "configNames").mockReturnValue(new Set(["lia-s1", "lia"]));
+    try {
+      const st = state([rec(1, "Hmm, lia-s1 is thrashing again and lia keeps restarting it.", "2026-09-10T00:00:00Z")]);
+      expect(candidates(st, emptyCache(), 10)[0]!.text).toBe("Hmm, [name] is thrashing again and [name] keeps restarting it.");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("candidates drops obvious non-sentences (title only, too short, mask-only)", () => {
