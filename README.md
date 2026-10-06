@@ -75,7 +75,7 @@ bun run unregister             # 자동 발행 해제
 
 | 소스 | 위치 | 무엇이 남는가 |
 |---|---|---|
-| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | `response_item.payload.reasoning.summary[].text` — Codex Desktop이 남긴 1인칭 요약. CLI/exec 경로는 비어 있음 |
+| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | `response_item.payload.reasoning.summary[].text` — 추론 요약. **`~/.codex/config.toml`에 `model_reasoning_summary = "detailed"`가 없으면 `summary: []`로 비어 기록된다**(2026-07~09 로그 3,285개가 전부 그랬다). 요약은 사용자 언어와 무관하게 영어로 나온다 |
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `assistant.message.content[].thinking` — 본문이 있는 블록만(대부분은 서명만 남음) |
 
 제목 한 줄뿐인 요약(`**Planning tests**`)은 속마음이 아니라 진행 표시라 수집 단계에서 버린다.
