@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     const exposure = process.argv.includes("--no-exposure") ? undefined : exposureMap();
     const now = new Date();
     for (const s of select(state.records, { perSource: n, judgments, exposure, now })) {
-      const fun = `fun=${s.fun.toFixed(1)}${s.mood ? `/${s.mood}` : ""}`;
+      const fun = `fun=${s.fun.toFixed(1)}${s.mood ? `/${s.mood}` : ""}${s.pick ? "★" : ""}`;
       const exp = exposureState(exposure?.get(s.id), now);
       console.log(`[${s.source}] ${s.ts.slice(0, 16)} (${fun} h=${s.score}/${s.target}${exp === "none" ? "" : ` ${exp}`}) ${s.text}`);
     }

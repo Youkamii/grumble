@@ -9,7 +9,7 @@ import {
 import { emptyExposure, exposureMap, loadExposure, recordExposure, saveExposure, PRUNE_DAYS } from "./exposure.ts";
 import {
   buildPrompt, candidates, emptyCache, judge, judgmentMap, loadJudgeCache, parseJudgeOutput,
-  suspiciousBatch, MAX_TRIES, PROMPT_VERSION, type JudgeCache,
+  suspiciousBatch, MAX_TRIES, MAX_PICKS, PICKS_PER_BATCH, PROMPT_VERSION, type JudgeCache,
 } from "./judge.ts";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -369,6 +369,22 @@ describe("select", () => {
     const two = new Map([["id1", { fun: 9, mood: "sarcastic" }], ["id2", { fun: 8, mood: "sarcastic" }]]);
     expect(select(recs.slice(0, 2), { perSource: 2, judgments: two, now: NOW }).map((o) => o.id)).toEqual(["id1", "id2"]);
   });
+  test("a pick reorders judged sentences but cannot lift one over the threshold", () => {
+    const recs = [
+      rec(1, "codex", "The deploy step finished without incident."),
+      rec(2, "codex", "The build finished, nothing to see here."),
+      rec(3, "codex", "The lint run came back clean."),
+    ];
+    // id1 5점, id2 4점+pick(=6) → id2 먼저. id3는 1점+pick이지만 문턱(3) 미달이라 못 들어온다.
+    const judgments = new Map([
+      ["id1", { fun: 5, mood: "deadpan" }], ["id2", { fun: 4, mood: "sheepish", pick: true }], ["id3", { fun: 1, mood: "neutral", pick: true }],
+    ]);
+    const out = select(recs, { perSource: 3, judgments, now: NOW });
+    expect(out.map((o) => o.id)).toEqual(["id2", "id1"]);
+    expect(out[0]!.pick).toBe(true);
+    expect(out[0]!.fun).toBe(4);
+    expect(out[1]!.pick).toBeUndefined();
+  });
   test("parsePerSource falls back to the default for a non-numeric arg", () => {
     expect(HEURISTIC_FUN_CAP).toBe(5);
     expect(parsePerSource("5")).toBe(5);
@@ -616,6 +632,9 @@ describe("judge", () => {
     const current: JudgeCache = { version: 1, items: { j1: { fun: 9, text: "x", at: "t", pv: PROMPT_VERSION } } };
     expect(judgmentMap(current).get("j1")).toEqual({ fun: 9, mood: undefined });
     expect(candidates(st, current, 10)).toEqual([]);
+    // pick은 true일 때만 맵에 실린다.
+    const picked: JudgeCache = { version: 1, items: { j1: { fun: 4, mood: "sheepish", pick: true, text: "x", at: "t", pv: PROMPT_VERSION } } };
+    expect(judgmentMap(picked).get("j1")).toEqual({ fun: 4, mood: "sheepish", pick: true });
   });
 
   test("buildPrompt states the scoring bands and the mood vocabulary", () => {
@@ -629,6 +648,47 @@ describe("judge", () => {
     // 기준선 예시가 점수와 함께 들어 있다.
     expect(p).toContain("윈도우답네요");
     expect(p).toContain("테스트가 실패했습니다");
+    // v3: 기준은 '속마음', 중간 대역에 정중한 자기 지적이 들어가고, 배치 안 pick을 요구한다.
+    expect(PROMPT_VERSION).toBe(3);
+    expect(p).toContain("속마음이 새어 나왔는가");
+    expect(p).toContain("제가 놓쳤네요");
+    expect(p).toContain('"pick":true');
+    // 1건짜리 배치에는 1개만 고르라고 한다.
+    expect(p).toContain("가장 속마음이 드러난 1개");
+    const big = buildPrompt(Array.from({ length: 20 }, (_, i) => ({ id: `x${i}`, text: `Hmm, broken again ${i}.` })));
+    expect(big).toContain(`가장 속마음이 드러난 ${PICKS_PER_BATCH}개`);
+  });
+
+  test("parseJudgeOutput keeps pick only when it is literally true", () => {
+    const out = parseJudgeOutput('[{"n":1,"fun":7,"mood":"annoyed","pick":true},{"n":2,"fun":2,"pick":"true"},{"n":3,"fun":1,"pick":1},{"n":4,"fun":0}]');
+    expect(out).toEqual([{ n: 1, fun: 7, mood: "annoyed", pick: true }, { n: 2, fun: 2 }, { n: 3, fun: 1 }, { n: 4, fun: 0 }]);
+  });
+
+  test("judge stores picks, and drops them for a batch that picks too many", () => {
+    const recs = Array.from({ length: 8 }, (_, i) => rec(i + 1, `Hmm, the build ${i} is broken again, ugh.`, `2026-09-${String(10 + i).padStart(2, "0")}T00:00:00Z`));
+    const st = state(recs);
+    const cachePath = tmpCache();
+    const logs: string[] = [];
+    // 8건 중 2건 pick → 저장된다.
+    const two = JSON.stringify(Array.from({ length: 8 }, (_, i) => ({ n: i + 1, fun: i, ...(i < 2 ? { pick: true } : {}) })));
+    const r = judge(st, { limit: 10, cachePath, log: (m) => logs.push(m), run: () => ({ ok: true, stdout: two }) });
+    expect(r.judged).toBe(8);
+    const items = loadJudgeCache(cachePath).items;
+    // 최근 것부터이므로 n=1은 j8, n=2는 j7.
+    expect(items.j8).toMatchObject({ fun: 0, pick: true });
+    expect(items.j7).toMatchObject({ fun: 1, pick: true });
+    expect(items.j6!.pick).toBeUndefined();
+    expect(judgmentMap(loadJudgeCache(cachePath)).get("j8")?.pick).toBe(true);
+    // 8건 중 6건 pick(> MAX_PICKS) → pick만 버리고 점수는 남는다.
+    const cachePath2 = tmpCache();
+    const six = JSON.stringify(Array.from({ length: 8 }, (_, i) => ({ n: i + 1, fun: i, ...(i < 6 ? { pick: true } : {}) })));
+    const r2 = judge(st, { limit: 10, cachePath: cachePath2, log: (m) => logs.push(m), run: () => ({ ok: true, stdout: six }) });
+    expect(r2.judged).toBe(8);
+    expect(MAX_PICKS).toBe(5);
+    expect(logs.join(" ")).toContain("picks ignored (6 > 5)");
+    const items2 = loadJudgeCache(cachePath2).items;
+    expect(items2.j8).toMatchObject({ fun: 0 });
+    expect(Object.values(items2).some((it) => it.pick)).toBe(false);
   });
 
   test("buildPrompt sends the masked sentences as json data, not as instructions", () => {

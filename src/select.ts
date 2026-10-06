@@ -35,6 +35,8 @@ export interface Judgment {
   fun: number;
   /** 한 단어 분위기(annoyed, confused, smug, resigned, deadpan, neutral 등). */
   mood?: string;
+  /** 판정 배치(20건) 안에서 가장 속마음이 드러난 3건. 정렬 키에 PICK_BONUS를 얹는다(문턱에는 영향 없음). */
+  pick?: boolean;
 }
 
 /** 발행 노출 기록. exposure.ts가 만들고 select가 소비한다. */
@@ -57,6 +59,8 @@ export interface Selected {
   fun: number;
   /** LLM 판정이 있을 때만. */
   mood?: string;
+  /** LLM 판정이 배치 안에서 골라낸 문장. */
+  pick?: boolean;
 }
 
 export interface SelectOptions {
@@ -85,8 +89,13 @@ export const STICKY_HOURS = 24;
 export const COOLDOWN_DAYS = 14;
 /** 0단계가 훑는 최근 창(일). */
 export const WINDOW_DAYS = 14;
-/** sticky 문장의 정렬 보너스. fun(≤10)+최근성(≤3)을 확실히 넘기는 값이면 된다. */
+/** sticky 문장의 정렬 보너스. fun(≤10)+최근성(≤3)+pick(≤2)을 확실히 넘기는 값이면 된다. */
 export const STICKY_BONUS = 100;
+/**
+ * 배치 안 pick의 정렬 보너스. 절대 점수가 바닥(0~1)에 깔린 최근 문장들 사이에서 상대 분별을 살린다.
+ * 문턱(FUN_THRESHOLD)은 raw fun으로 보므로 pick이 밋밋한 문장을 말풍선에 끌어올리지는 못한다.
+ */
+export const PICK_BONUS = 2;
 const RECENCY_FULL_DAYS = 7;
 const RECENCY_ZERO_DAYS = 90;
 const RECENCY_MAX = 3;
@@ -166,7 +175,7 @@ export function select(records: GrumbleRecord[], opts: SelectOptions = {}): Sele
     const exp = exposureState(opts.exposure?.get(r.id), now);
     const t = Date.parse(r.ts);
     const ageDays = Number.isFinite(t) ? (now.getTime() - t) / 86_400_000 : Infinity;
-    const key = fun + recencyBonus(r.ts, now) + (exp === "sticky" ? STICKY_BONUS : 0);
+    const key = fun + recencyBonus(r.ts, now) + (j?.pick ? PICK_BONUS : 0) + (exp === "sticky" ? STICKY_BONUS : 0);
     cands.push({ r, best, j, fun, key, exp, ageDays });
   }
   // 재미 내림차순, 동점이면 LLM 판정이 있는 쪽 우선, 그다음 최근 우선.
@@ -211,6 +220,7 @@ export function select(records: GrumbleRecord[], opts: SelectOptions = {}): Sele
         id: c.r.id, source: c.r.source, ts: c.r.ts, text: masked,
         score: c.best.score, target: c.best.target, fun: c.fun,
         ...(c.j?.mood ? { mood: c.j.mood } : {}),
+        ...(c.j?.pick ? { pick: true } : {}),
       });
     }
     if (bySource.codex!.length >= perSource && bySource.claude!.length >= perSource) break;
