@@ -1,5 +1,5 @@
 {
-  "renderedAt": "2026-11-24T21:05:05.367Z",
+  "renderedAt": "2026-11-25T03:00:07.027Z",
   "items": [
     {
       "source": "claude",
@@ -31,17 +31,17 @@
     },
     {
       "source": "codex",
-      "ts": "2026-11-18T15:05:08.272Z",
-      "text": "제가 처음 검색할 때 Git 폴더에 있는 이 키트를 놓쳤습니다. Tailscale로 두 기기를 연결하고 Moonlight로 집에 있는 Windows PC 화면을 조작하는 도구입니다.",
-      "target": "self",
-      "kind": "confession"
-    },
-    {
-      "source": "codex",
       "ts": "2026-10-25T02:08:52.107Z",
       "text": "합치려 하면 main 이 또 앞서간다. 세 번째다.",
       "target": "misc",
       "kind": "mutter"
+    },
+    {
+      "source": "codex",
+      "ts": "2026-11-18T15:05:08.272Z",
+      "text": "제가 처음 검색할 때 Git 폴더에 있는 이 키트를 놓쳤습니다. Tailscale로 두 기기를 연결하고 Moonlight로 집에 있는 Windows PC 화면을 조작하는 도구입니다.",
+      "target": "self",
+      "kind": "confession"
     },
     {
       "source": "claude",
